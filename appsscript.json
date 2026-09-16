@@ -1,0 +1,45 @@
+{
+  "timeZone": "America/Bogota",
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/script.scriptapp"
+  ],
+  "addOns": {
+    "common": {
+      "name": "Gestor de Solicitudes",
+      "logoUrl": "https://lh3.googleusercontent.com/d/12yKuquQULwA3n5OvZ7qAnyK0S1_jUODA",
+      "openLinkUrlPrefixes": [
+        "https://docs.google.com/",
+        "https://drive.google.com/",
+        "https://github.com/"
+      ],
+      "homepageTrigger": {
+        "runFunction": "onHomepage"
+      },
+      "universalActions": [
+        {
+          "label": "❓ Ayuda",
+          "runFunction": "onMostrarAyuda"
+        }
+      ]
+    },
+    "gmail": {
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "onGmailMessageOpen"
+        }
+      ]
+    },
+    "sheets": {
+      "homepageTrigger": {
+        "runFunction": "onHomepageSheets"
+      }
+    }
+  }
+}

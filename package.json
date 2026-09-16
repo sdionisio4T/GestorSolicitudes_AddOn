@@ -1,0 +1,12 @@
+{
+  "name": "gestor-de-solicitudes",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Google Workspace Add-on para gestionar solicitudes de despliegue. Este package.json es solo para lintar el codigo con ESLint — el add-on corre en Apps Script, no en Node.",
+  "scripts": {
+    "lint": "eslint --ext .gs ."
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  }
+}
