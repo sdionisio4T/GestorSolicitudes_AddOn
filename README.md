@@ -109,15 +109,21 @@ npm install
 npm run lint
 ```
 
-## Despliegue
+## Distribución
 
-Desde el editor de Apps Script:
+El add-on se distribuye a los testers como **implementación de prueba**, no como implementación oficial de Workspace Marketplace.
 
-1. **Implementar → Administrar implementaciones**.
-2. En la implementación activa, ícono del lápiz.
-3. **Versión → Nueva versión**, describir el cambio.
-4. **Implementar**.
+### Compartir el proyecto con un tester
 
-Los usuarios instalados ven el cambio la próxima vez que recargan Gmail o abren el add-on.
+Desde el editor de Apps Script, ícono de **Compartir** (👤➕ arriba a la derecha) → agregar el correo del tester con acceso de **Editor**. Eso le da permiso para abrir el proyecto y ejecutar la implementación de prueba en su cuenta.
 
-Para probar sin afectar a los usuarios: **Implementar → Probar implementaciones → Instalar**. Eso usa el código guardado más reciente y aplica solo a tu cuenta.
+### Instalar el add-on como tester
+
+Una vez que el tester tiene acceso al proyecto:
+
+1. Abrir el proyecto en el editor de Apps Script.
+2. Menú superior **Implementar → Implementaciones de prueba**.
+3. **Instalar**.
+4. Aceptar los permisos que pide Google (los cinco scopes declarados en `appsscript.json`).
+
+El add-on queda disponible en el panel lateral de Gmail y en Sheets para esa cuenta. Los cambios en el código quedan visibles la próxima vez que el tester recarga Gmail o reabre el add-on — sin necesidad de reinstalar.
