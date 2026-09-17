@@ -1,0 +1,54 @@
+name: Deploy a Apps Script
+
+# Cuando corre este workflow
+on:
+  # En cada push a main (merge de PR o push directo)
+  push:
+    branches: [main]
+  # Permite disparar manualmente desde la pestaña Actions de GitHub
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: clasp push a GestorSolicitudes_AddOn
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) Bajar el codigo del repo al runner temporal
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2) Instalar Node.js
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # 3) Instalar dependencias del proyecto (ESLint, plugins)
+      - name: Install dependencies
+        run: npm ci
+
+      # 4) Correr el linter como validacion previa. Si falla, aborta antes
+      #    de subir cualquier cambio a Apps Script.
+      - name: Run ESLint
+        run: npm run lint
+
+      # 5) Instalar clasp globalmente en el runner
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      # 6) Restaurar el token de autenticacion desde el Secret al home del
+      #    runner. Sin esto clasp no esta logueado y Google rechaza el push.
+      - name: Restore clasp auth
+        run: echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
+
+      # 7) Restaurar el .clasp.json (con el scriptId del proyecto) desde
+      #    el Secret. Sin esto clasp no sabe a que Apps Script subir.
+      - name: Restore .clasp.json
+        run: echo '${{ secrets.CLASP_JSON }}' > .clasp.json
+
+      # 8) Ejecutar el push. --force acepta automaticamente cambios en el
+      #    manifest (appsscript.json) sin pedir confirmacion interactiva.
+      - name: Push to Apps Script
+        run: clasp push --force
