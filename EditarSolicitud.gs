@@ -13,7 +13,7 @@
 
 var EDITABLES_CONFIG = {
   DIAS_ATRAS: 30,
-  ESTADOS_EDITABLES: ['PENDIENTE']
+  ESTADOS_EDITABLES: ['PENDIENTE', 'NO APROBADO', 'APROBADO']
 };
 
 // ── Parseo del contenido de la celda Estado (col H) ─────────────────────
@@ -119,6 +119,45 @@ function listarEditablesPorCaso(numeroCaso) {
   return listarSolicitudesEditables().filter(function(item) {
     return String(item.numeroCaso) === String(numeroCaso);
   });
+}
+
+/**
+ * Devuelve las filas "manuales" del Sheet para el caso dado: filas cuyo
+ * numeroCaso coincide pero que NO tienen envioId (col M vacía). Son
+ * filas que alguien escribió a mano directo en el Sheet sin pasar por
+ * el add-on. Sin filtro por fecha — un duplicado es duplicado igual.
+ * Se usa para avisar al usuario antes de que registre otra fila.
+ */
+function listarFilasManualesPorCaso(numeroCaso) {
+  if (!numeroCaso) return [];
+  try {
+    var sheet = obtenerSheet();
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return [];
+
+    var datos = sheet.getRange(2, 1, lastRow - 1, SHEET_COLS.ID_ENVIO).getValues();
+    var manuales = [];
+    var casoBuscado = String(numeroCaso);
+
+    for (var i = 0; i < datos.length; i++) {
+      var fila = datos[i];
+      if (fila[SHEET_COLS.ID_ENVIO - 1]) continue; // tiene envioId → no es manual
+      if (String(fila[SHEET_COLS.NUMERO_CASO - 1] || '') !== casoBuscado) continue;
+
+      var estadoParsed = parsearEstadoCelda(fila[SHEET_COLS.ESTADO - 1]);
+      manuales.push({
+        filaSheet: i + 2,
+        ambiente: String(fila[SHEET_COLS.AMBIENTE - 1] || ''),
+        componente: String(fila[SHEET_COLS.COMPONENTE - 1] || ''),
+        estado: estadoParsed.estado,
+        fecha: parsearFechaCelda(fila[SHEET_COLS.FECHA - 1])
+      });
+    }
+    return manuales;
+  } catch (err) {
+    console.error('[Editar] listarFilasManualesPorCaso: ' + err.message);
+    return [];
+  }
 }
 
 /**
@@ -509,7 +548,7 @@ function buildListaEditablesCard(opts) {
       CardService.newCardSection()
         .addWidget(
           CardService.newTextParagraph()
-            .setText('No hay solicitudes en <b>PENDIENTE</b> en los últimos ' + EDITABLES_CONFIG.DIAS_ATRAS + ' días.')
+            .setText('No hay solicitudes editables en los últimos ' + EDITABLES_CONFIG.DIAS_ATRAS + ' días.')
         )
         .addWidget(
           CardService.newTextParagraph()

@@ -7,6 +7,7 @@
     "lint": "eslint --ext .gs ."
   },
   "devDependencies": {
-    "eslint": "^8.57.0"
+    "eslint": "^8.57.0",
+    "eslint-plugin-security": "^4.0.1"
   }
 }

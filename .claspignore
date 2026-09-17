@@ -1,0 +1,25 @@
+# Archivos y carpetas que NO deben subir al editor web de Apps Script.
+# Solo suben los .gs, los .html (si hay) y appsscript.json.
+
+# Dependencias y configuracion de Node / ESLint (viven solo en local)
+node_modules/**
+package.json
+package-lock.json
+.eslintrc.js
+
+# Documentacion del repo y assets
+README.md
+*.md
+assets/**
+
+# Git y clasp mismos
+.git/**
+.gitignore
+.clasp.json
+.claspignore
+
+# Backups y temporales
+*.bak
+*.bak.*
+*.tmp
+*.swp

@@ -95,12 +95,20 @@ El proyecto se sincroniza con el editor web de Apps Script mediante clasp:
 
 ```bash
 clasp login          # una sola vez, con la cuenta de Google del proyecto
-clasp clone <scriptId>
 clasp pull           # bajar cambios hechos en el editor web
 clasp push           # subir cambios locales al editor web
 ```
 
-El archivo `.clasp.json` contiene el `scriptId` y está excluido del repositorio; cada quien lo genera con `clasp clone` apuntando a su propio proyecto.
+El archivo `.clasp.json` contiene el `scriptId` (el identificador del proyecto Apps Script destino) y está excluido del repositorio porque puede diferir entre colaboradores (por ejemplo, cada uno con su propio proyecto de desarrollo). Se provee `.clasp.json.example` como plantilla:
+
+```bash
+cp .clasp.json.example .clasp.json
+# editar .clasp.json y reemplazar TU_SCRIPT_ID_AQUI por el scriptId real
+```
+
+El `scriptId` se obtiene del editor de Apps Script en **Configuración del proyecto → ID de secuencia de comandos**.
+
+El archivo `.claspignore` sí se versiona porque define qué archivos del repo NO deben subirse a Apps Script (documentación, dependencias de npm, configuración de linter, assets, etc.) — es política del proyecto y debe ser consistente entre colaboradores.
 
 ### Lint
 

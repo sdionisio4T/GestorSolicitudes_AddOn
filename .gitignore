@@ -17,9 +17,11 @@ Thumbs.db
 .vscode/
 .idea/
 
-# clasp — el scriptId es específico de tu cuenta corporativa
+# clasp — el scriptId es específico del proyecto Apps Script destino
+# (cada usuario configura su propio .clasp.json usando .clasp.json.example
+# como plantilla). El .claspignore sí se versiona porque es política
+# compartida del proyecto.
 .clasp.json
-.claspignore
 
 # Dependencias de npm (ESLint). El código del add-on no corre en Node,
 # package.json y node_modules existen solo para lintar en local.

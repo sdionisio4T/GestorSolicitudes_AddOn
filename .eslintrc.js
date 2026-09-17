@@ -22,6 +22,17 @@
  *   - no-dupe-keys       → objeto con la misma key dos veces
  *   - no-unreachable     → codigo despues de un return / throw
  *
+ * Reglas de seguridad (eslint-plugin-security):
+ *   Se activa el set 'recommended-legacy' del plugin, que atrapa patrones
+ *   riesgosos comunes en JavaScript: uso de eval() con expresiones,
+ *   RegExp construidos con variables, Math.random() usado en contexto de
+ *   seguridad, comparacion de strings sensible a timing attacks, y
+ *   bracket-notation con input no confiable. Las reglas Node-especificas
+ *   (fs, child_process, Buffer, require, Express, Handlebars) se
+ *   desactivan porque no aplican al runtime de Apps Script. detect-unsafe-regex
+ *   tambien se desactiva por generar solo falsos positivos en este
+ *   proyecto (ver comentario en rules).
+ *
  * Como correrlo:
  *   npm run lint        → linta todos los .gs y muestra errores en consola.
  *   La extension "ESLint" de VS Code lo corre automatico mientras editas.
@@ -35,6 +46,8 @@ module.exports = {
     ecmaVersion: 2021,
     sourceType: 'script',
   },
+  plugins: ['security'],
+  extends: ['plugin:security/recommended-legacy'],
   globals: {
     // Google Apps Script builtins que usa el proyecto
     CardService: 'readonly',
@@ -69,6 +82,34 @@ module.exports = {
     curly: ['warn', 'multi-line'],
     'no-dupe-keys': 'error',
     'no-unreachable': 'error',
+    // Reglas de eslint-plugin-security desactivadas porque son especificas
+    // de Node.js y no aplican al runtime de Apps Script (no hay fs,
+    // child_process, Buffer, require, ni Express/Handlebars).
+    'security/detect-non-literal-fs-filename': 'off',
+    'security/detect-non-literal-require': 'off',
+    'security/detect-child-process': 'off',
+    'security/detect-buffer-noassignment': 'off',
+    'security/detect-new-buffer': 'off',
+    'security/detect-no-csrf-before-method-override': 'off',
+    'security/detect-disable-mustache-escape': 'off',
+    'security/detect-bidi-characters': 'off',
+    // detect-object-injection marca CUALQUIER acceso obj[var] con corchetes
+    // aunque el indice sea un contador de loop, una clave interna, o una
+    // URL ya validada. Esta pensada para el caso Node/Express con
+    // req.query como indice, vector que no existe en Apps Script (no hay
+    // HTTP requests del atacante, los inputs vienen de correo y formularios
+    // ya parseados). Es la regla mas falso-positiva del plugin. Se
+    // desactiva a nivel proyecto; si en algun archivo especifico se
+    // recibiera indice de input no confiable, se reactiva puntual con
+    // /* eslint-enable security/detect-object-injection */.
+    'security/detect-object-injection': 'off',
+    // detect-unsafe-regex usa safe-regex, que marca por heurística cualquier
+    // regex con cuantificador sobre grupos aunque el patrón no sea vulnerable
+    // a ReDoS. Los regexes del proyecto operan sobre URLs, formatos de fecha
+    // y strings del Sheet/correo (longitud acotada, no input adversarial
+    // arbitrario), y los cuantificadores están todos acotados o siguen a
+    // literales fijos. Genera solo falsos positivos → se desactiva.
+    'security/detect-unsafe-regex': 'off',
   },
   ignorePatterns: [
     'node_modules/',

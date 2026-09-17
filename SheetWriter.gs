@@ -58,6 +58,10 @@ function onEnviar(e) {
     // Marca esta combinación como "ya enviada" por 15 segundos.
     marcarDobleClic_(firma);
 
+    // El envío se guardó: cerramos el formulario activo para que la
+    // homepage no siga ofreciendo "Volver al formulario".
+    cerrarFormularioActivo_();
+
     return construirRespuestaFinal_(e, input, {
       sheet: sheet,
       startRow: startRow,

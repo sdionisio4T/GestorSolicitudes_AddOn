@@ -9,18 +9,21 @@ function onHomepage(e) {
     return [buildCardConfigApropiada(motivo)];
   }
 
-  return [buildHomepageCard()];
+  return [buildHomepageCard(null, null, leerFormularioActivo_())];
 }
 
 /**
- * Construye la card del panel principal. Extraída para poder reutilizarla
- * desde `onIrAlInicio` (botón "Menú principal" en la validation card),
- * así el usuario puede volver al menú sin salir del correo.
+ * Construye la card del panel principal.
  *
- * Si se pasa messageId, arriba de todo se muestra un botón "Volver al
- * caso" que lo lleva de vuelta a la validation card del correo actual.
+ * - `messageIdVolver`: botón "Volver al caso detectado" (interno, usado
+ *   por onIrAlInicio cuando el usuario ya está viendo la validation).
+ * - `messageIdDetectar`: botón "Detectar caso en este correo". Se usa
+ *   al abrir un correo sin form activo — la detección ya no es
+ *   automática para evitar duplicados cuando el caso ya existe.
+ * - `activo`: si hay un formulario activo (de cualquier correo) sin
+ *   submitear, se agrega arriba de todo un botón para volver a él.
  */
-function buildHomepageCard(messageId) {
+function buildHomepageCard(messageIdVolver, messageIdDetectar, activo) {
   var card = CardService.newCardBuilder()
     .setHeader(
       CardService.newCardHeader()
@@ -28,8 +31,39 @@ function buildHomepageCard(messageId) {
         .setSubtitle('Panel principal')
     );
 
-  // ── Volver al caso (solo si venimos desde un correo) ──
-  if (messageId) {
+  // ── Botón "Volver al caso que estás armando" (siempre que haya activo) ──
+  if (activo && activo.messageId && activo.messageId !== messageIdVolver) {
+    var etiqueta = activo.datos && activo.datos.numeroCaso
+      ? 'Caso ' + activo.datos.numeroCaso
+      : 'este caso';
+    var seccionActivo = CardService.newCardSection()
+      .addWidget(
+        CardService.newTextParagraph()
+          .setText('📝 <b>Estás armando un envío para ' + escaparHtml(etiqueta) + '.</b>')
+      )
+      .addWidget(
+        CardService.newButtonSet()
+          .addButton(
+            CardService.newTextButton()
+              .setText('🔙 Volver al formulario')
+              .setOnClickAction(
+                CardService.newAction()
+                  .setFunctionName('onVolverAlFormularioActivo')
+              )
+              .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+              .setBackgroundColor('#f9ab00')
+          )
+          .addButton(
+            CardService.newTextButton()
+              .setText('❌ Descartar')
+              .setOnClickAction(
+                CardService.newAction()
+                  .setFunctionName('onDescartarFormularioActivo')
+              )
+          )
+      );
+    card.addSection(seccionActivo);
+  } else if (messageIdVolver) {
     card.addSection(
       CardService.newCardSection()
         .addWidget(
@@ -38,7 +72,7 @@ function buildHomepageCard(messageId) {
             .setOnClickAction(
               CardService.newAction()
                 .setFunctionName('onVolverAlCaso')
-                .setParameters({ messageId: messageId })
+                .setParameters({ messageId: messageIdVolver })
             )
             .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
             .setBackgroundColor('#5f6368')
@@ -46,13 +80,32 @@ function buildHomepageCard(messageId) {
     );
   }
 
+  // ── Botón "Detectar caso" (cuando estamos en un correo sin form activo) ──
+  if (messageIdDetectar && (!activo || activo.messageId !== messageIdDetectar)) {
+    card.addSection(
+      CardService.newCardSection()
+        .addWidget(
+          CardService.newTextButton()
+            .setText('🔍 Detectar caso en este correo')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('onDetectarCaso')
+                .setParameters({ messageId: messageIdDetectar })
+            )
+            .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+            .setBackgroundColor('#1a73e8')
+        )
+    );
+  }
+
   return card
-    // ── Intro ──
     .addSection(
       CardService.newCardSection()
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Abrí un correo de solicitud para validar y enviar. Desde acá también podés gestionar los envíos existentes.')
+            .setText(messageIdDetectar
+              ? 'Presioná <b>Detectar caso</b> para leer este correo y armar el envío. Si el caso ya existe, vas a ver los envíos previos y podés modificarlos en vez de duplicar.'
+              : 'Abrí un correo de solicitud y presioná <b>Detectar caso</b>. Desde acá también podés gestionar los envíos existentes.')
         )
     )
     // ── Nuevo envío ──
@@ -141,7 +194,7 @@ function onIrAlInicio(e) {
   var messageId = (e && e.parameters && e.parameters.messageId) || '';
   return CardService.newActionResponseBuilder()
     .setNavigation(
-      CardService.newNavigation().pushCard(buildHomepageCard(messageId))
+      CardService.newNavigation().pushCard(buildHomepageCard(messageId, null, leerFormularioActivo_()))
     )
     .build();
 }
@@ -159,26 +212,30 @@ function onVolverAlCaso(e) {
       .setNavigation(CardService.newNavigation().popCard())
       .build();
   }
+
+  // Preferimos los datos guardados del formulario activo — así no
+  // dependemos del access token del correo (que puede haber expirado
+  // si el usuario ya navegó al menú y volvió).
+  var activo = leerFormularioActivo_();
+  if (activo && activo.messageId === messageId) {
+    var card = cardDetectada_(activo.datos, messageId);
+    return CardService.newActionResponseBuilder()
+      .setNavigation(
+        CardService.newNavigation().popToRoot().updateCard(card)
+      )
+      .setStateChanged(true)
+      .build();
+  }
+
+  // Fallback: no hay activo guardado, intentamos releer el correo.
   try {
     if (e.gmail && e.gmail.accessToken) {
       GmailApp.setCurrentMessageAccessToken(e.gmail.accessToken);
     }
-    var message = GmailApp.getMessageById(messageId);
-    var datos = extraerDatos(message.getPlainBody(), message.getSubject());
-    var enviosCaso = listarSobresPorCaso(datos.numeroCaso);
-    var envioEnCursoId = enviosCaso.length > 0 ? enviosCaso[0].envioId : null;
-    var envioEsperandoAccesoId = null;
-    if (!envioEnCursoId) {
-      var esperando = listarTerminadosPorCaso(datos.numeroCaso);
-      envioEsperandoAccesoId = esperando.length > 0 ? esperando[0].envioId : null;
-    }
-    var editablesCaso = listarEditablesPorCaso(datos.numeroCaso);
-
+    var cardFallback = construirValidacionDesdeMessageId_(messageId);
     return CardService.newActionResponseBuilder()
       .setNavigation(
-        CardService.newNavigation()
-          .popToRoot()
-          .updateCard(buildValidacionCard(datos, messageId, null, envioEnCursoId, envioEsperandoAccesoId, null, editablesCaso))
+        CardService.newNavigation().popToRoot().updateCard(cardFallback)
       )
       .setStateChanged(true)
       .build();
@@ -248,37 +305,27 @@ function onGmailMessageOpen(e) {
     return [buildCardConfigApropiada(motivo)];
   }
 
-  var accessToken = e.gmail.accessToken;
-  GmailApp.setCurrentMessageAccessToken(accessToken);
-
   var messageId = e.gmail.messageId;
-  var message = GmailApp.getMessageById(messageId);
+  var activo = leerFormularioActivo_();
 
-  if (!message) {
-    console.error('[GmailOpen] No se pudo leer el mensaje: ' + messageId);
-    return [buildErrorCard('No se pudo leer el correo.')];
+  // Si hay un formulario activo para ESTE correo, restauramos la card
+  // directamente desde los datos guardados (sin releer el mensaje).
+  if (activo && activo.messageId === messageId) {
+    console.log('[GmailOpen] Restaurando formulario activo para ' + messageId);
+    return [cardDetectada_(activo.datos, messageId)];
   }
 
-  var remitente = message.getFrom();
-  var body = message.getPlainBody();
-  var asunto = message.getSubject();
+  // Si hay un formulario activo pero para OTRO correo, pintamos el menú
+  // del correo actual con un botón arriba "Volver al caso que estás armando".
+  return [buildHomepageCard(null, messageId, activo)];
+}
 
-  console.log('[GmailOpen] Remitente: ' + remitente + ' | Asunto: ' + asunto + ' | Body: ' + (body ? body.length : 0) + ' chars');
-
-  if (!esSolicitudValida(remitente, body)) {
-    console.log('[GmailOpen] No es solicitud válida — descartado');
-    return [buildNoAplicaCard()];
-  }
-
-  var datos = extraerDatos(body, asunto);
-
-  console.log('[GmailOpen] Extraído: caso=' + datos.numeroCaso + ' | servicio=' + datos.servicioDesplegar + ' | ambiente=' + datos.ambienteExtraido);
-
-  // Si hay al menos un envío del mismo caso todavía en reintento (sobre
-  // pendiente en UserProperties), pasamos el envioId más reciente para
-  // que buildValidacionCard pinte el banner "Ver estado del envío".
-  // Si no hay en curso pero SÍ hay un envío terminado con enlaces
-  // esperando acceso (sobre TERMINADO), pintamos el otro banner.
+/**
+ * Reconstruye la card de validación a partir de datos ya extraídos.
+ * No requiere acceso al mensaje — útil desde onHomepage donde no hay
+ * `e.gmail.accessToken`.
+ */
+function construirValidacionDesdeDatos_(datos, messageId) {
   var enviosCaso = listarSobresPorCaso(datos.numeroCaso);
   var envioEnCursoId = enviosCaso.length > 0 ? enviosCaso[0].envioId : null;
   var envioEsperandoAccesoId = null;
@@ -286,21 +333,302 @@ function onGmailMessageOpen(e) {
     var esperando = listarTerminadosPorCaso(datos.numeroCaso);
     envioEsperandoAccesoId = esperando.length > 0 ? esperando[0].envioId : null;
   }
-
-  // Editables para el mismo caso (PENDIENTE / NO APROBADO en los últimos
-  // 30 días). Si hay al menos uno, la validación pinta un banner arriba
-  // que ofrece editar en lugar de crear un envío nuevo — así el usuario
-  // no genera una fila duplicada por confundirse con el formulario.
   var editablesCaso = listarEditablesPorCaso(datos.numeroCaso);
+  return buildValidacionCard(datos, messageId, null, envioEnCursoId, envioEsperandoAccesoId, null, editablesCaso);
+}
 
-  if (envioEnCursoId) {
-    console.log('[GmailOpen] Envío en curso detectado para caso ' + datos.numeroCaso + ': ' + envioEnCursoId);
-  } else if (envioEsperandoAccesoId) {
-    console.log('[GmailOpen] Envío esperando acceso para caso ' + datos.numeroCaso + ': ' + envioEsperandoAccesoId);
+/**
+ * Decide qué card mostrar tras detectar (o restaurar) un caso: si el
+ * caso ya tiene envíos previos en el Sheet (con envioId o filas
+ * manuales), muestra la chooser "Nuevo envío / Editar existente";
+ * si no, el formulario de creación.
+ */
+function cardDetectada_(datos, messageId) {
+  var editablesCaso = listarEditablesPorCaso(datos.numeroCaso);
+  var manuales = listarFilasManualesPorCaso(datos.numeroCaso);
+  if (editablesCaso.length > 0 || manuales.length > 0) {
+    return buildElegirAccionCasoCard(datos, messageId, editablesCaso, manuales);
   }
+  return construirValidacionDesdeDatos_(datos, messageId);
+}
+
+/**
+ * Reconstruye la card leyendo el mensaje. Requiere que el llamador ya
+ * haya seteado `GmailApp.setCurrentMessageAccessToken` con un token
+ * válido para ese mensaje.
+ */
+function construirValidacionDesdeMessageId_(messageId) {
+  var message = GmailApp.getMessageById(messageId);
+  var datos = extraerDatos(message.getPlainBody(), message.getSubject());
+  return construirValidacionDesdeDatos_(datos, messageId);
+}
+
+// ─── Formulario activo (persistencia global entre correos e inbox) ───
+// Al detectar un caso, guardamos {messageId, datos, ts} bajo UNA sola clave.
+// onHomepage y onGmailMessageOpen lo leen para restaurar el form o mostrar
+// un botón "Volver al caso" — así el usuario no pierde el trabajo aunque
+// navegue al inbox o a otros correos. Se limpia al submitear, al pulsar
+// "Cerrar formulario", o pasadas 6 horas.
+var FORMULARIO_ACTIVO_KEY_ = 'form_activo';
+var FORMULARIO_ACTIVO_TTL_MS_ = 21600000; // 6 horas
+
+function guardarFormularioActivo_(messageId, datos) {
+  if (!messageId || !datos) return;
+  var payload = JSON.stringify({ messageId: messageId, datos: datos, ts: Date.now() });
+  PropertiesService.getUserProperties().setProperty(FORMULARIO_ACTIVO_KEY_, payload);
+  console.log('[FormActivo] GUARDADO msg=' + messageId + ' caso=' + (datos.numeroCaso || '?'));
+}
+
+function leerFormularioActivo_() {
+  var raw = PropertiesService.getUserProperties().getProperty(FORMULARIO_ACTIVO_KEY_);
+  if (!raw) {
+    console.log('[FormActivo] leer → nada');
+    return null;
+  }
+  var payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (err) {
+    console.error('[FormActivo] JSON inválido, limpiando: ' + err.message);
+    cerrarFormularioActivo_();
+    return null;
+  }
+  var edad = Date.now() - (payload.ts || 0);
+  if (edad > FORMULARIO_ACTIVO_TTL_MS_) {
+    console.log('[FormActivo] EXPIRADO (edad ' + edad + 'ms), limpiando');
+    cerrarFormularioActivo_();
+    return null;
+  }
+  console.log('[FormActivo] leer → activo msg=' + payload.messageId + ' edad=' + edad + 'ms');
+  return payload;
+}
+
+function cerrarFormularioActivo_() {
+  PropertiesService.getUserProperties().deleteProperty(FORMULARIO_ACTIVO_KEY_);
+  console.log('[FormActivo] CERRADO');
+}
+
+/**
+ * Handler del botón "🔙 Volver al formulario" que aparece en la homepage
+ * (inbox u otro correo) cuando hay un formulario activo. Reconstruye la
+ * validation card usando los datos guardados — no necesita releer el
+ * mensaje, así que funciona incluso desde el inbox.
+ */
+function onVolverAlFormularioActivo(e) {
+  var activo = leerFormularioActivo_();
+  if (!activo) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(
+        CardService.newNotification().setText('El formulario ya no está disponible.')
+      )
+      .setNavigation(CardService.newNavigation().updateCard(buildHomepageCard()))
+      .build();
+  }
+  var card = cardDetectada_(activo.datos, activo.messageId);
+  return CardService.newActionResponseBuilder()
+    .setNavigation(
+      CardService.newNavigation().popToRoot().updateCard(card)
+    )
+    .setStateChanged(true)
+    .build();
+}
+
+/**
+ * Handler del botón "❌ Descartar" en la homepage. Limpia el formulario
+ * activo y refresca la card para que el botón desaparezca.
+ */
+function onDescartarFormularioActivo(e) {
+  cerrarFormularioActivo_();
+  return CardService.newActionResponseBuilder()
+    .setNavigation(
+      CardService.newNavigation().updateCard(buildHomepageCard())
+    )
+    .setNotification(
+      CardService.newNotification().setText('Formulario descartado.')
+    )
+    .build();
+}
+
+/**
+ * Callback del botón "Detectar caso en este correo" (Homepage abierta
+ * desde Gmail). Ejecuta la lectura del mensaje, validación y extracción
+ * de datos, y muestra la validation card. Antes esto corría automático
+ * en onGmailMessageOpen, pero generaba confusión cuando el caso ya
+ * existía (se abría el formulario de creación aunque hubiera envíos
+ * previos). Ahora el usuario decide cuándo detectar.
+ */
+function onDetectarCaso(e) {
+  var messageId = (e && e.parameters && e.parameters.messageId)
+    || (e && e.gmail && e.gmail.messageId);
+  if (!messageId) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(
+        CardService.newNotification().setText('No se pudo identificar el correo abierto.')
+      )
+      .build();
+  }
+
+  if (e && e.gmail && e.gmail.accessToken) {
+    GmailApp.setCurrentMessageAccessToken(e.gmail.accessToken);
+  }
+
+  var message = GmailApp.getMessageById(messageId);
+  if (!message) {
+    console.error('[Detectar] No se pudo leer el mensaje: ' + messageId);
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().pushCard(buildErrorCard('No se pudo leer el correo.')))
+      .build();
+  }
+
+  var remitente = message.getFrom();
+  var body = message.getPlainBody();
+  var asunto = message.getSubject();
+
+  console.log('[Detectar] Remitente: ' + remitente + ' | Asunto: ' + asunto + ' | Body: ' + (body ? body.length : 0) + ' chars');
+
+  if (!esSolicitudValida(remitente, body)) {
+    console.log('[Detectar] No es solicitud válida — descartado');
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().pushCard(buildNoAplicaCard()))
+      .build();
+  }
+
+  var datos = extraerDatos(body, asunto);
+  console.log('[Detectar] Extraído: caso=' + datos.numeroCaso + ' | servicio=' + datos.servicioDesplegar);
+
+  guardarFormularioActivo_(messageId, datos);
+
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(cardDetectada_(datos, messageId)))
+    .build();
+}
+
+/**
+ * Card intermedia que aparece cuando "Detectar caso" encuentra que el
+ * caso YA existe en el Sheet. El usuario elige:
+ *   - Editar existente → edit card (1) o lista de editables (>1).
+ *     Solo aparece si hay envíos con envioId (editables desde el add-on).
+ *   - Nuevo envío → formulario de creación (ambiente/componente extra).
+ *     Siempre aparece.
+ *   - Filas manuales (sin envioId) → se listan como aviso; no se pueden
+ *     editar desde el add-on porque les falta el envioId de referencia.
+ */
+function buildElegirAccionCasoCard(datos, messageId, editablesCaso, manuales) {
+  editablesCaso = editablesCaso || [];
+  manuales = manuales || [];
+
+  var card = CardService.newCardBuilder()
+    .setHeader(
+      CardService.newCardHeader()
+        .setTitle('Caso ya registrado')
+        .setSubtitle('Caso ' + (datos.numeroCaso || '(sin caso)') + ' · ' + (datos.servicioDesplegar || '(sin servicio)'))
+    );
+
+  // ── Envíos con envioId (editables desde el add-on) ──
   if (editablesCaso.length > 0) {
-    console.log('[GmailOpen] Editables detectados para caso ' + datos.numeroCaso + ': ' + editablesCaso.length);
+    var resumen = editablesCaso.map(function(item) {
+      var comp = (item.componentes || []).join(', ') || '(sin componente)';
+      return '• <b>' + escaparHtml(item.estado) + '</b> · ' + escaparHtml(item.ambiente || '(sin ambiente)') +
+             ' · ' + escaparHtml(comp);
+    }).join('<br>');
+    card.addSection(
+      CardService.newCardSection()
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('Este caso ya tiene <b>' + editablesCaso.length + ' envío' +
+              (editablesCaso.length === 1 ? '' : 's') + '</b> registrado' +
+              (editablesCaso.length === 1 ? '' : 's') + ' desde el add-on:')
+        )
+        .addWidget(
+          CardService.newTextParagraph().setText(resumen)
+        )
+    );
   }
 
-  return [buildValidacionCard(datos, messageId, null, envioEnCursoId, envioEsperandoAccesoId, null, editablesCaso)];
+  // ── Filas manuales (sin envioId) — aviso, no se pueden editar ──
+  if (manuales.length > 0) {
+    var resumenManual = manuales.map(function(m) {
+      return '• <b>' + escaparHtml(m.estado || '(sin estado)') + '</b> · ' +
+             escaparHtml(m.ambiente || '(sin ambiente)') + ' · ' +
+             escaparHtml(m.componente || '(sin componente)') +
+             ' · fila ' + m.filaSheet;
+    }).join('<br>');
+    card.addSection(
+      CardService.newCardSection()
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('⚠️ <b>' + manuales.length + ' fila' + (manuales.length === 1 ? '' : 's') +
+              ' manual' + (manuales.length === 1 ? '' : 'es') +
+              '</b> (sin ID de envío) para este caso. Revisá antes de duplicar:')
+        )
+        .addWidget(
+          CardService.newTextParagraph().setText(resumenManual)
+        )
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('<i>No se pueden editar desde el add-on porque les falta el ID de envío. Si querés modificarlas, hacelo directo en el Sheet.</i>')
+        )
+    );
+  }
+
+  // ── Opciones ──
+  var seccionAcciones = CardService.newCardSection().setHeader('¿Qué querés hacer?');
+
+  if (editablesCaso.length > 0) {
+    var accionEditar;
+    if (editablesCaso.length === 1) {
+      accionEditar = CardService.newAction()
+        .setFunctionName('onAbrirEditar')
+        .setParameters({ envioId: editablesCaso[0].envioId, messageId: messageId || '' });
+    } else {
+      accionEditar = CardService.newAction()
+        .setFunctionName('onListarEditables')
+        .setParameters({ messageId: messageId || '' });
+    }
+    seccionAcciones.addWidget(
+      CardService.newTextButton()
+        .setText('✏️ Editar existente')
+        .setOnClickAction(accionEditar)
+        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setBackgroundColor('#f9ab00')
+    );
+  }
+
+  seccionAcciones.addWidget(
+    CardService.newTextButton()
+      .setText('➕ Registrar otro envío nuevo')
+      .setOnClickAction(
+        CardService.newAction()
+          .setFunctionName('onIrANuevoEnvio')
+          .setParameters({ messageId: messageId || '' })
+      )
+      .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+      .setBackgroundColor('#1a73e8')
+  );
+
+  card.addSection(seccionAcciones);
+  return card.build();
+}
+
+/**
+ * Handler del botón "Registrar otro envío nuevo" en la card
+ * buildElegirAccionCasoCard. Reemplaza esa card por el formulario de
+ * creación con los datos del correo ya extraídos.
+ */
+function onIrANuevoEnvio(e) {
+  var messageId = (e && e.parameters && e.parameters.messageId) || '';
+  var activo = leerFormularioActivo_();
+  if (!activo || activo.messageId !== messageId) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(
+        CardService.newNotification().setText('No se encontraron los datos del correo. Volvé a detectar.')
+      )
+      .setNavigation(CardService.newNavigation().popCard())
+      .build();
+  }
+  var card = construirValidacionDesdeDatos_(activo.datos, messageId);
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(card))
+    .setStateChanged(true)
+    .build();
 }
