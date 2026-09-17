@@ -1,5 +1,5 @@
 /**
- * Ayuda.gs — Contenido de la card de ayuda del add-on (FAQ larga).
+ * Ayuda.gs: contenido de la card de ayuda del add-on (FAQ larga).
  * Vive aparte de Cards.gs porque su ciclo de vida es distinto: se toca
  * cuando cambia la documentación, no cuando cambia el flujo de la app.
  * Los handlers que la muestran (onMostrarAyuda / onAbrirAyuda) están en
@@ -32,7 +32,41 @@ function buildAyudaCard() {
         )
     )
 
-    // ═══ 2. NUEVO ENVÍO ═══
+    // ═══ 2. DETECCIÓN Y FLUJO ═══
+    .addSection(
+      CardService.newCardSection()
+        .setHeader('¿Cómo detecto el caso de un correo?')
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('Al abrir un correo, el add-on muestra el <b>menú principal</b> con un botón azul arriba: <b>🔍 Detectar caso en este correo</b>. Presionalo cuando quieras leer el correo y armar el envío.\n\nLa detección ya no es automática al abrir el correo: así evitamos abrir el formulario de creación cuando el caso ya existía en el Sheet.')
+        )
+    )
+    .addSection(
+      CardService.newCardSection()
+        .setHeader('¿Qué pasa cuando el caso ya está en el Sheet?')
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('Después de presionar <b>Detectar caso</b>, si el número de caso ya tiene envíos previos, aparece la card <b>"Caso ya registrado"</b> con un resumen de esos envíos y dos opciones:\n\n• <b>✏️ Editar existente</b>: si hay un solo envío previo con ID, va directo a la card de edición. Si hay varios, muestra la lista para elegir cuál.\n\n• <b>➕ Registrar otro envío nuevo</b>: abre el formulario de creación (para agregar otro ambiente o componente al mismo caso).\n\nSi el caso NO tiene envíos previos, se abre directamente el formulario de creación.')
+        )
+    )
+    .addSection(
+      CardService.newCardSection()
+        .setHeader('¿Qué son las "filas manuales"?')
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('Son filas del Sheet cuyo número de caso coincide pero <b>no tienen ID de envío</b> (columna M vacía). Son filas escritas a mano directo en el Sheet, sin pasar por el add-on.\n\nSi la detección encuentra filas manuales para el caso, la card "Caso ya registrado" las lista con un aviso ⚠️ (estado, ambiente, componente y número de fila), pero <b>no ofrece el botón editar</b> para ellas: el add-on necesita el ID de envío como referencia para modificar sin duplicar. Si querés cambiar una fila manual, hacelo directamente en el Sheet.')
+        )
+    )
+    .addSection(
+      CardService.newCardSection()
+        .setHeader('Si voy al inbox u otro correo, ¿pierdo el formulario?')
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('No. Al detectar un caso, el add-on guarda temporalmente el messageId y los datos extraídos. Si te movés al inbox o a otro correo, la homepage muestra arriba un botón <b>"🔙 Volver al formulario"</b> con el caso que estabas armando.\n\nAl volver a ese mismo correo, la card se restaura sola.\n\nEl formulario activo se limpia cuando: (a) presionás <b>ENVIAR AL SHEET</b>, (b) presionás <b>❌ Descartar</b> en la homepage, o (c) pasan 6 horas sin actividad.')
+        )
+    )
+
+    // ═══ 3. NUEVO ENVÍO ═══
     .addSection(
       CardService.newCardSection()
         .setHeader('¿Qué hace ENVIAR AL SHEET?')
@@ -46,7 +80,7 @@ function buildAyudaCard() {
         .setHeader('¿Cómo registro varios ambientes o componentes del mismo caso?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Después de ENVIAR, el formulario se vuelve a mostrar con los mismos datos. Cambia el Ambiente o marca otros Componentes y presiona ENVIAR de nuevo. No hace falta cerrar y volver a abrir el correo.\n\nSi marcas varios Componentes a la vez, se crea una fila por cada uno, todas con el mismo Ambiente, Estado y Observaciones.')
+            .setText('Después de ENVIAR, el formulario se vuelve a mostrar con los mismos datos. Cambiá el Ambiente o marcá otros Componentes y presioná ENVIAR de nuevo. No hace falta cerrar y volver a abrir el correo.\n\nSi marcás varios Componentes a la vez, se crea una fila por cada uno, todas con el mismo Ambiente, Estado y Observaciones.')
         )
     )
     .addSection(
@@ -54,25 +88,17 @@ function buildAyudaCard() {
         .setHeader('¿Para qué sirven los campos Sonar y Artefactos?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Son campos opcionales que puedes completar en el formulario:\n\n• <b>Sonar</b>: URL del análisis de Sonar del servicio. Debe empezar con <i>http://</i> o <i>https://</i>. Se guarda como hipervínculo clicable en el Sheet.\n\n• <b>Artefactos</b>: texto libre para registrar nombres de artefactos, versiones, notas del despliegue o cualquier información adicional. Acepta varias líneas.')
+            .setText('Son campos opcionales que podés completar en el formulario:\n\n• <b>Sonar</b>: URL del análisis de Sonar del servicio. Debe empezar con <i>http://</i> o <i>https://</i>. Se guarda como hipervínculo clicable en el Sheet.\n\n• <b>Artefactos</b>: texto libre para registrar nombres de artefactos, versiones, notas del despliegue o cualquier información adicional. Acepta varias líneas.')
         )
     )
 
-    // ═══ 3. EDITOR DE SOLICITUDES ═══
+    // ═══ 4. EDITOR DE SOLICITUDES ═══
     .addSection(
       CardService.newCardSection()
         .setHeader('¿Cómo modifico un envío ya guardado?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Ve al menú principal del add-on y entra a <b>✏️ Editor de solicitudes</b>. Ahí aparecen todas las solicitudes de los últimos 30 días en estado <b>PENDIENTE</b> o <b>NO APROBADO</b>. Presiona <b>Editar</b> en la que quieras modificar.\n\nLa edición sobrescribe la fila existente en el Sheet: no crea una nueva. Puedes cambiar servicio, ambiente, estado, observaciones, correo, repositorio, Sonar y artefactos. Los archivos de Drive ya copiados quedan intactos.\n\n<i>La cantidad de componentes queda fija: si un envío tiene 2 filas (una por cada componente), quedan 2 filas después de editar.</i>')
-        )
-    )
-    .addSection(
-      CardService.newCardSection()
-        .setHeader('¿Cuándo aparece el banner "Este caso ya tiene un envío editable"?')
-        .addWidget(
-          CardService.newTextParagraph()
-            .setText('Cuando abres un correo cuyo caso ya tiene una solicitud en <b>PENDIENTE</b> o <b>NO APROBADO</b> (creada en los últimos 30 días), aparece un banner amarillo arriba del formulario que te ofrece editarla en vez de crear una fila nueva. Es un recordatorio para evitar duplicados.\n\nSi ignoras el banner y presionas ENVIAR AL SHEET, se crea igual una fila nueva.')
+            .setText('Dos caminos:\n\n<b>1.</b> Abrí el correo del caso, presioná <b>Detectar caso</b>, y si el caso ya existe elegí <b>✏️ Editar existente</b> en la card "Caso ya registrado".\n\n<b>2.</b> Ir al menú principal y entrar a <b>✏️ Editor de solicitudes</b>. Ahí aparecen todos los envíos de los últimos 30 días en estado <b>PENDIENTE</b>, <b>NO APROBADO</b> o <b>APROBADO</b>. Presioná <b>Editar</b> en el que quieras modificar.\n\nLa edición sobrescribe la fila existente en el Sheet, no crea una nueva. Podés cambiar servicio, ambiente, estado, observaciones, correo, repositorio, Sonar y artefactos. Los archivos de Drive ya copiados quedan intactos.\n\n<i>La cantidad de componentes queda fija: si un envío tiene 2 filas (una por cada componente), quedan 2 filas después de editar.</i>')
         )
     )
     .addSection(
@@ -80,11 +106,11 @@ function buildAyudaCard() {
         .setHeader('¿Qué envíos NO aparecen en el Editor de solicitudes?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('El editor solo muestra filas que cumplen tres condiciones:\n\n• Tienen ID de envío en la columna M (oculta) — solo las filas creadas por el add-on.\n• Estado <b>PENDIENTE</b> o <b>NO APROBADO</b>.\n• Fecha del envío dentro de los últimos 30 días.\n\nSi editaste una fila a mano en el Sheet sin ID de envío, si ya está APROBADA, o si es de hace más de 30 días, no aparece. Podés modificarla directamente en el Sheet.')
+            .setText('El editor solo muestra filas que cumplen tres condiciones:\n\n• Tienen <b>ID de envío</b> en la columna M (oculta): solo las filas creadas por el add-on.\n• Estado <b>PENDIENTE</b>, <b>NO APROBADO</b> o <b>APROBADO</b>.\n• Fecha del envío dentro de los últimos 30 días.\n\nLas filas escritas a mano sin ID de envío no aparecen acá (aunque sí las lista la card "Caso ya registrado" como aviso al detectar). Podés modificarlas directamente en el Sheet.')
         )
     )
 
-    // ═══ 4. COPIA A DRIVE ═══
+    // ═══ 5. COPIA A DRIVE ═══
     .addSection(
       CardService.newCardSection()
         .setHeader('¿Qué pasa con los enlaces de Drive del correo?')
@@ -106,7 +132,7 @@ function buildAyudaCard() {
         .setHeader('¿Qué pasa si la copia inicial no alcanza a terminar?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('El add-on tiene 30 segundos para la primera pasada. Si son muchos archivos o carpetas grandes, lo que no alcance a copiar se pasa a un <b>proceso en segundo plano</b> que sigue reintentando en el servidor de Google (hasta 10 rondas de 5 minutos).\n\nPuedes cerrar Gmail o apagar la computadora, el proceso continúa. Cuando vuelvas, presiona <b>Actualizar</b> en la card de estado o abre el Sheet — la columna Estado Copia se actualiza sola.')
+            .setText('El add-on tiene 30 segundos para la primera pasada. Si son muchos archivos o carpetas grandes, lo que no alcance a copiar se pasa a un <b>proceso en segundo plano</b> que sigue reintentando en el servidor de Google (hasta 10 rondas de 5 minutos).\n\nPodés cerrar Gmail o apagar la computadora, el proceso continúa. Cuando vuelvas, presioná <b>Actualizar</b> en la card de estado o abrí el Sheet: la columna Estado Copia se actualiza sola.')
         )
     )
     .addSection(
@@ -122,17 +148,17 @@ function buildAyudaCard() {
         .setHeader('¿Qué pasa si no tengo permiso a un enlace de Drive?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('El add-on no puede pedir acceso a Drive por ti: eso hay que hacerlo manualmente. El flujo es:\n\n<b>1.</b> La copia falla para ese enlace y aparece en <b>Envíos → Esperando acceso</b>. En el Sheet, el estado queda como <i>"PENDIENTE - Falta de permisos"</i> aunque hayas seleccionado APROBADO al enviar.\n\n<b>2.</b> Abre el enlace, presiona <b>"Solicitar acceso"</b> o pídelo por chat/correo al dueño.\n\n<b>3.</b> Cuando te den acceso, vuelve al add-on, entra al envío y presiona <b>🔄 Reintentar copia</b>. En 1 a 15 segundos empieza a copiar los que faltaban.\n\nSi sabes que no vas a resolver el permiso, presiona <b>Descartar</b> para sacarlo de la lista. Los envíos sin reintentar se limpian solos a los 7 días.')
+            .setText('El add-on no puede pedir acceso a Drive por vos: eso hay que hacerlo manualmente. El flujo es:\n\n<b>1.</b> La copia falla para ese enlace y aparece en <b>Envíos → Esperando acceso</b>. En el Sheet, el estado queda como <i>"PENDIENTE - Falta de permisos"</i> aunque hayas seleccionado APROBADO al enviar.\n\n<b>2.</b> Abrí el enlace, presioná <b>"Solicitar acceso"</b> o pedilo por chat/correo al dueño.\n\n<b>3.</b> Cuando te den acceso, volvé al add-on, entrá al envío y presioná <b>🔄 Reintentar copia</b>. En 1 a 15 segundos empieza a copiar los que faltaban.\n\nSi sabés que no vas a resolver el permiso, presioná <b>Descartar</b> para sacarlo de la lista. Los envíos sin reintentar se limpian solos a los 7 días.')
         )
     )
 
-    // ═══ 5. NAVEGACIÓN ═══
+    // ═══ 6. NAVEGACIÓN ═══
     .addSection(
       CardService.newCardSection()
         .setHeader('¿Cómo veo los envíos en curso o esperando acceso?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Tienes varias formas:\n\n<b>1.</b> Menú principal → <b>📋 Envíos en curso</b>. La lista tiene dos secciones: <b>📋 En curso</b> (reintentando en segundo plano) y <b>🔓 Esperando acceso</b> (con enlaces sin copiar por falta de permiso).\n\n<b>2.</b> Al abrir un correo cuyo caso tiene un envío en marcha, aparece un banner arriba del formulario con acceso directo al estado (amarillo si está en curso, verde si está esperando acceso).\n\n<b>3.</b> El add-on también aparece en el panel lateral derecho de Google Sheets. Al abrirlo, ves directamente la lista de envíos sin tener que ir a Gmail.')
+            .setText('Varias formas:\n\n<b>1.</b> Menú principal → <b>📋 Envíos en curso</b>. La lista tiene dos secciones: <b>📋 En curso</b> (reintentando en segundo plano) y <b>🔓 Esperando acceso</b> (con enlaces sin copiar por falta de permiso).\n\n<b>2.</b> Al detectar un correo cuyo caso tiene un envío en marcha, aparece un banner arriba del formulario con acceso directo al estado (amarillo si está en curso, verde si está esperando acceso).\n\n<b>3.</b> El add-on también aparece en el panel lateral derecho de Google Sheets. Al abrirlo, ves directamente la lista de envíos sin tener que ir a Gmail.')
         )
     )
     .addSection(
@@ -140,17 +166,17 @@ function buildAyudaCard() {
         .setHeader('¿Cómo vuelvo al menú principal sin cerrar el correo?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Presiona <b>🏠 Ir al menú principal</b> arriba de la validation card. Desde ahí accedes a Envíos en curso, Editor de solicitudes, Configuración y Ayuda.\n\nCuando quieras volver al caso detectado del correo, presiona el botón <b>🔙 Volver al caso detectado</b> que aparece arriba del menú principal.')
+            .setText('Presioná <b>🏠 Ir al menú principal</b> arriba de la validation card. Desde ahí accedés a Envíos en curso, Editor de solicitudes, Configuración y Ayuda.\n\nCuando quieras volver al caso detectado del correo, presioná <b>🔙 Volver al caso detectado</b> que aparece arriba del menú principal. Si mientras tanto vas al inbox u otro correo, el banner <b>"🔙 Volver al formulario"</b> te lleva de regreso al mismo estado.')
         )
     )
 
-    // ═══ 6. NOTAS TÉCNICAS ═══
+    // ═══ 7. NOTAS TÉCNICAS ═══
     .addSection(
       CardService.newCardSection()
         .setHeader('¿Qué correo queda en el Sheet?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('En la columna <b>Correo solicitante</b> queda el email de la persona que pidió el despliegue, extraído del cuerpo del correo (frase <i>"del siguiente correo:"</i>). Si el detector no lo encontró, puedes escribirlo a mano antes de enviar.')
+            .setText('En la columna <b>Correo solicitante</b> queda el email de la persona que pidió el despliegue, extraído del cuerpo del correo (frase <i>"del siguiente correo:"</i>). Si el detector no lo encontró, podés escribirlo a mano antes de enviar.')
         )
     )
     .addSection(
@@ -158,7 +184,7 @@ function buildAyudaCard() {
         .setHeader('¿Qué pasa si presiono ENVIAR dos veces por error?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Si es exactamente la misma combinación de caso, servicio, ambiente, componente y estado, el segundo clic se ignora durante 15 segundos y no se duplica la fila. Si cambiaste algo, sí se registra como envío nuevo.')
+            .setText('Si es exactamente la misma combinación de caso, servicio, ambiente, componente y estado, el segundo clic se ignora durante 15 segundos y no se duplica la fila. Si cambiaste algo, sí se registra como envío nuevo.\n\nAparte de este chequeo, si el caso ya existía en el Sheet cuando presionaste Detectar, la card "Caso ya registrado" te ofrece editar en vez de crear, reduciendo el riesgo de duplicados intencionales.')
         )
     )
     .addSection(
@@ -166,7 +192,7 @@ function buildAyudaCard() {
         .setHeader('¿Qué correos detecta el add-on?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Detecta correos que contengan la frase <i>"El caso asignado con numero"</i> en el cuerpo, o que vengan de un remitente incluido en la lista de permitidos. Basta con que se cumpla una de las dos condiciones.')
+            .setText('Detecta correos que contengan la frase <i>"El caso asignado con numero"</i> en el cuerpo, o que vengan de un remitente incluido en la lista de permitidos. Basta con que se cumpla una de las dos condiciones.\n\nSi el correo no cumple ninguna condición, al presionar Detectar caso aparece la card <b>"No aplica"</b>.')
         )
     )
     .addSection(
@@ -174,7 +200,7 @@ function buildAyudaCard() {
         .setHeader('¿Hay restricciones en el número de caso?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('El número de caso debe contener solo dígitos y tener máximo 4 caracteres. Si el dato extraído del correo no cumple, puedes corregirlo manualmente antes de enviar.')
+            .setText('El número de caso debe contener solo dígitos y tener máximo 4 caracteres. Si el dato extraído del correo no cumple, podés corregirlo manualmente antes de enviar.')
         )
     )
     .addSection(

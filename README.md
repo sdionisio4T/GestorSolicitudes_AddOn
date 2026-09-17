@@ -4,20 +4,21 @@ Google Workspace Add-on (Gmail + Sheets) que automatiza el registro de solicitud
 
 ## Funcionalidades
 
-- **Detección automática** de correos con solicitudes de despliegue (por frase clave o remitente permitido).
-- **Extracción de campos** desde el cuerpo del correo: número de caso, servicio, ambiente, correo del solicitante, enlaces de Drive y repositorio.
+- **Detección manual con botón** al abrir un correo: se muestra el menú principal con un botón **"🔍 Detectar caso en este correo"** que dispara la lectura del cuerpo y la extracción de datos. La detección ya no es automática al abrir el correo, para evitar abrir el formulario de creación cuando el caso ya existía en el Sheet.
+- **Extracción de campos** desde el cuerpo del correo: número de caso, servicio, ambiente, correo del solicitante, enlaces de Drive y repositorio (por frase clave o remitente permitido).
+- **Chooser "Caso ya registrado"**: si al detectar el caso ya tiene envíos previos en el Sheet, aparece una card intermedia con las opciones **"✏️ Editar existente"** y **"➕ Registrar otro envío nuevo"**. Además avisa si hay filas manuales (sin ID de envío) para el mismo caso.
 - **Formulario de validación** en el panel lateral con los datos pre-llenados, más campos opcionales (Sonar, artefactos). El usuario ajusta y envía.
+- **Persistencia del formulario activo** entre correos e inbox: al detectar un caso se guarda el estado por hasta 6 horas; si el usuario se va al inbox u otro correo, la homepage muestra un botón **"🔙 Volver al formulario"** para retomar sin perder los datos extraídos.
 - **Escritura en Sheet** de una fila por componente, con manejo de bloqueo para envíos concurrentes.
 - **Copia de archivos en Drive** con estructura de carpetas por servicio, caso y APIM, con reintentos automáticos en segundo plano si algo falla.
 - **Panel de envíos** para consultar el estado de solicitudes en curso (desde Gmail o Sheets).
-- **Editor de solicitudes** para modificar envíos ya guardados sin duplicar filas ni re-copiar archivos.
-- **Detección de duplicados**: banner que avisa cuando el caso de un correo ya tiene un envío editable.
+- **Editor de solicitudes** para modificar envíos ya guardados sin duplicar filas ni re-copiar archivos. Incluye estados PENDIENTE, NO APROBADO y APROBADO de los últimos 30 días.
 
 ## Estructura del proyecto
 
 | Archivo | Descripción |
 |---|---|
-| `Main.gs` | Triggers de entrada: `onHomepage`, `onHomepageSheets`, `onGmailMessageOpen`. Navegación cruzada correo ↔ menú principal. |
+| `Main.gs` | Triggers de entrada: `onHomepage`, `onHomepageSheets`, `onGmailMessageOpen`. Handler `onDetectarCaso` (botón manual), navegación cruzada correo ↔ menú principal, y persistencia del formulario activo (`UserProperties`) para no perder el estado al cambiar de correo o ir al inbox. |
 | `Auth.gs` | Chequeo de scopes OAuth. Tarjeta de autorización requerida. |
 | `Config.gs` | Configuración global (`CONFIG`) y helpers de `UserProperties` (Sheet, pestaña, carpeta raíz). |
 | `ConfigHandlers.gs` | Handlers de los botones del wizard, panel de configuración y ayuda. |
@@ -32,6 +33,21 @@ Google Workspace Add-on (Gmail + Sheets) que automatiza el registro de solicitud
 | `EditarSolicitud.gs` | Editor de solicitudes ya guardadas (in-place, sin duplicar filas). |
 | `Tests.gs` | Tests unitarios de helpers puros (regex, columnas, parsing). |
 | `appsscript.json` | Manifiesto del add-on: scopes OAuth, triggers, logo, dominios permitidos. |
+
+## Estructura del repositorio
+
+Además de los archivos `.gs` de código, el repositorio contiene:
+
+| Ubicación | Descripción |
+|---|---|
+| `.github/workflows/deploy.yml` | Workflow de GitHub Actions que lintea y sube el código a Apps Script en cada push a `main`. |
+| `assets/` | Assets estáticos del proyecto (por ejemplo el ícono del add-on). Se guardan aquí como fuente de verdad versionada, aunque el logo servido por el add-on en runtime se sirve desde una URL pública configurada en `appsscript.json`. |
+| `.clasp.json.example` | Plantilla del archivo `.clasp.json` con el `scriptId` como placeholder. Cada colaborador la copia como `.clasp.json` local y la completa con el ID del proyecto que le corresponde. |
+| `.claspignore` | Lista de archivos que `clasp push` no debe subir al editor web de Apps Script. Versionada porque es política común del proyecto. |
+| `.eslintrc.js` | Configuración de ESLint con reglas de calidad de código y de seguridad (`eslint-plugin-security`) para los archivos `.gs`. |
+| `.gitignore` | Archivos y carpetas que git ignora (incluye `.clasp.json`, dependencias de npm, documentación interna del mantenedor, entre otros). |
+| `package.json` y `package-lock.json` | Declaración y versiones exactas de dependencias de npm. El proyecto solo usa npm para lintear en local y en CI. El add-on no corre en Node. |
+| `README.md` | Este archivo. |
 
 ## Scopes OAuth
 
@@ -51,9 +67,9 @@ Google solicita todos los scopes juntos al instalar. `Auth.gs` muestra una tarje
 
 Cada persona que instala el add-on define tres valores la primera vez que lo abre. Se guardan en `UserProperties` y son propias de esa cuenta:
 
-- `SHEET_ID` — ID del Sheet de seguimiento donde va a escribir.
-- `SHEET_TAB` — nombre de la pestaña dentro de ese Sheet.
-- `CARPETA_RAIZ_ID` — ID de la carpeta raíz de Drive del cliente donde se replican los adjuntos.
+- `SHEET_ID`: ID del Sheet de seguimiento donde va a escribir.
+- `SHEET_TAB`: nombre de la pestaña dentro de ese Sheet.
+- `CARPETA_RAIZ_ID`: ID de la carpeta raíz de Drive del cliente donde se replican los adjuntos.
 
 Se editan desde el botón **⚙ Configuración** del homepage.
 
@@ -108,7 +124,7 @@ cp .clasp.json.example .clasp.json
 
 El `scriptId` se obtiene del editor de Apps Script en **Configuración del proyecto → ID de secuencia de comandos**.
 
-El archivo `.claspignore` sí se versiona porque define qué archivos del repo NO deben subirse a Apps Script (documentación, dependencias de npm, configuración de linter, assets, etc.) — es política del proyecto y debe ser consistente entre colaboradores.
+El archivo `.claspignore` sí se versiona porque define qué archivos del repo NO deben subirse a Apps Script (documentación, dependencias de npm, configuración de linter, assets, etc.). Es política del proyecto y debe ser consistente entre colaboradores.
 
 ### Lint
 
@@ -116,6 +132,38 @@ El archivo `.claspignore` sí se versiona porque define qué archivos del repo N
 npm install
 npm run lint
 ```
+
+## Automatización de despliegue
+
+Cada push a la rama `main` dispara automáticamente el workflow definido en `.github/workflows/deploy.yml`. El workflow se ejecuta en un runner Ubuntu efímero de GitHub Actions y hace lo siguiente:
+
+1. Clona el código del repositorio.
+2. Instala Node.js 20 y las dependencias declaradas en `package.json` (`npm ci`).
+3. Corre ESLint (`npm run lint`). Si aparecen errores, el workflow se aborta.
+4. Instala clasp globalmente.
+5. Restaura las credenciales de clasp y el `.clasp.json` desde los GitHub Secrets del repositorio.
+6. Ejecuta `clasp push --force` contra el proyecto Apps Script destino.
+
+Si cualquiera de los pasos falla, el workflow queda en rojo y Apps Script conserva la versión anterior. Los cambios llegan al editor web únicamente cuando el workflow termina en verde.
+
+### Secretos requeridos
+
+El workflow lee dos secretos configurados en la sección Actions Secrets del repositorio en GitHub:
+
+| Secret | Contenido |
+|---|---|
+| `CLASPRC_JSON` | Contenido del archivo `~/.clasprc.json` local, generado con `clasp login`. Incluye el refresh token de la cuenta de Google que hace el push. |
+| `CLASP_JSON` | Contenido del archivo `.clasp.json` local con el `scriptId` del proyecto Apps Script destino. |
+
+Ambos secretos se guardan encriptados en GitHub y solo se descifran en el momento de correr el workflow, dentro del runner efímero. `CLASPRC_JSON` es especialmente sensible porque autentica ante Google; su rotación se hace corriendo `clasp login` local de nuevo y actualizando el valor del secret.
+
+### Disparo manual
+
+Además del push automático a `main`, el workflow puede dispararse a mano desde la pestaña **Actions** del repositorio con el botón **Run workflow**. Útil para reintentar un deploy que falló por causas transitorias (por ejemplo, timeout de red hablando con Google) sin generar un commit nuevo.
+
+### Push desde local como fallback
+
+Si por alguna razón el pipeline no está disponible (credenciales del secret vencidas, GitHub Actions en mantenimiento, cambios que no van a versionarse todavía), se puede subir a Apps Script directamente desde local con `clasp push`. Requiere haber corrido `clasp login` en la cuenta correcta y tener un `.clasp.json` válido en la raíz del proyecto.
 
 ## Distribución
 
@@ -134,4 +182,4 @@ Una vez que el tester tiene acceso al proyecto:
 3. **Instalar**.
 4. Aceptar los permisos que pide Google (los cinco scopes declarados en `appsscript.json`).
 
-El add-on queda disponible en el panel lateral de Gmail y en Sheets para esa cuenta. Los cambios en el código quedan visibles la próxima vez que el tester recarga Gmail o reabre el add-on — sin necesidad de reinstalar.
+El add-on queda disponible en el panel lateral de Gmail y en Sheets para esa cuenta. Los cambios en el código quedan visibles la próxima vez que el tester recarga Gmail o reabre el add-on, sin necesidad de reinstalar.
