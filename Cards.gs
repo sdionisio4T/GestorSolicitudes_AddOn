@@ -78,7 +78,7 @@ function buildValidacionCard(datos, messageId, seleccion, envioEnCursoId, envioE
   datos = datos || {};
   editablesCaso = editablesCaso || [];
   var esManual = !messageId;
-  console.log('[Card] Construyendo validación, caso: ' + (datos.numeroCaso || '(vacío)') + ' | messageId: ' + (messageId || '(manual)') + ' | envioEnCurso: ' + (envioEnCursoId || 'no') + ' | envioEsperandoAcceso: ' + (envioEsperandoAccesoId || 'no') + ' | editables: ' + editablesCaso.length);
+  console.log('[Card] Construyendo validación, caso: ' + redactCaso_(datos.numeroCaso) + ' | messageId: ' + (messageId || '(manual)') + ' | envioEnCurso: ' + (envioEnCursoId || 'no') + ' | envioEsperandoAcceso: ' + (envioEsperandoAccesoId || 'no') + ' | editables: ' + editablesCaso.length);
 
   var esReenvio = !!seleccion;
   seleccion = seleccion || {};

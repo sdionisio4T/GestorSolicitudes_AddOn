@@ -17,7 +17,7 @@ function esSolicitudValida(remitente, body) {
     });
   }
 
-  console.log('[Validacion] frase=' + tieneFrase + ' | remitente=' + tieneRemitente + ' | de=' + remitente);
+  console.log('[Validacion] frase=' + tieneFrase + ' | remitente=' + tieneRemitente + ' | de=' + redactEmail_(remitente));
 
   return tieneFrase || tieneRemitente;
 }
@@ -42,7 +42,7 @@ function extraerDatos(body, asunto) {
   // usuario lo llene a mano en el formulario.
   datos.correoSolicitante = extraerCorreoSolicitante(body);
   if (datos.correoSolicitante) {
-    console.log('[Extractor] Correo solicitante: ' + datos.correoSolicitante);
+    console.log('[Extractor] Correo solicitante: ' + redactEmail_(datos.correoSolicitante));
   } else {
     console.log('[Extractor] No se encontró correo solicitante en el body');
   }
@@ -63,10 +63,10 @@ function extraerDatos(body, asunto) {
   if (matchCaso) {
     var raw = matchCaso[1];
     if (raw.length > 4) {
-      console.warn('[Extractor] Caso con más de 4 dígitos: ' + raw + ' — no se trunca; la validación de onEnviar decidirá qué hacer.');
+      console.warn('[Extractor] Caso con más de 4 dígitos (largo=' + raw.length + ') — no se trunca; la validación de onEnviar decidirá qué hacer.');
     }
     datos.numeroCaso = raw;
-    console.log('[Extractor] Caso encontrado: ' + datos.numeroCaso + ' (patrón: ' + matchCaso[0] + ' | fuente: ' + fuenteCaso + ')');
+    console.log('[Extractor] Caso encontrado: ' + redactCaso_(datos.numeroCaso) + ' (fuente: ' + fuenteCaso + ')');
   } else {
     console.log('[Extractor] No se encontró número de caso ni en body ni en asunto');
   }
@@ -97,9 +97,9 @@ function extraerDatos(body, asunto) {
     datos.repositorio = deduplicarUrls(matchRepo.map(limpiarUrl)).join('\n');
   }
 
-  console.log('[Extractor] Resultado: caso=' + datos.numeroCaso +
-    ' | servicio=' + datos.servicioDesplegar +
-    ' | correoSolicitante=' + (datos.correoSolicitante || '(vacío)') +
+  console.log('[Extractor] Resultado: caso=' + redactCaso_(datos.numeroCaso) +
+    ' | servicio=' + redactTexto_(datos.servicioDesplegar) +
+    ' | correoSolicitante=' + redactEmail_(datos.correoSolicitante) +
     ' | driveUrls=' + (datos.driveDocumentacion ? datos.driveDocumentacion.split('\n').length : 0) +
     ' | repoUrls=' + (datos.repositorio ? datos.repositorio.split('\n').length : 0) +
     ' | ambiente=' + datos.ambienteExtraido);

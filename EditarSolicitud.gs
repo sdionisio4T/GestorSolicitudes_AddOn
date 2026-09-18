@@ -812,7 +812,7 @@ function onGuardarEdicion(e) {
 
       if (urlsDescartadas.length > 0) {
         toastCopia += ' Ignoradas ' + urlsDescartadas.length + ' URL(s) por no ser de Drive/Workspace.';
-        console.warn('[Editar] URLs descartadas: ' + urlsDescartadas.join(' | '));
+        console.warn('[Editar] URLs descartadas: ' + urlsDescartadas.map(redactUrl_).join(' | '));
       }
     } else if (solicitudReleida) {
       console.log('[Editar] Drive extra ignorado — estadoCopia no es "Sin archivos": ' + solicitudReleida.estadoCopia);

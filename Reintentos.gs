@@ -675,7 +675,7 @@ function guardarSobreTerminadoConPermiso(info, urlsSinAcceso, copiadosFinales, e
 
   try {
     props.setProperty(clave, JSON.stringify(terminado));
-    console.log('[Terminado] Guardado sobre para caso ' + terminado.numeroCaso + ' (' + terminado.envioId + ') — ' + terminado.urlsPermiso.length + ' URL(s) esperando acceso');
+    console.log('[Terminado] Guardado sobre para caso ' + redactCaso_(terminado.numeroCaso) + ' (' + terminado.envioId + '): ' + terminado.urlsPermiso.length + ' URL(s) esperando acceso');
     return true;
   } catch (err) {
     console.error('[Terminado] No se pudo guardar sobre: ' + err.message);

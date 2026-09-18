@@ -35,6 +35,53 @@ var CONFIG = {
 // de negocio (por ejemplo, aceptar otro formato de "caso asignado")
 // sea un cambio de un solo lugar.
 var REGEX_EMAIL = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
+
+// Redaccion de logs. Los datos de salud son sensibles bajo Ley 1581/2012 y
+// Decreto 1377/2013; registrar PII en console.log queda fuera de la
+// finalidad autorizada. Con LOG_REDACT_PII en true los helpers de abajo
+// enmascaran correo, asunto, numero de caso, servicio y URLs antes de
+// imprimir. Solo poner en false para depuracion local sobre datos ficticios.
+var LOG_REDACT_PII = true;
+
+function redactEmail_(v) {
+  if (!LOG_REDACT_PII) return String(v == null ? '' : v);
+  var s = String(v == null ? '' : v);
+  if (!s) return '(vacio)';
+  var m = s.match(/([^<\s]+)@([^>\s]+)/);
+  if (!m) return '***';
+  var user = m[1];
+  var dom = m[2];
+  var userMasked = user.length <= 1 ? '*' : user.charAt(0) + '***';
+  var puntoDom = dom.lastIndexOf('.');
+  var domMasked = puntoDom > 0
+    ? dom.charAt(0) + '***' + dom.substring(puntoDom)
+    : dom.charAt(0) + '***';
+  return userMasked + '@' + domMasked;
+}
+
+function redactCaso_(v) {
+  if (!LOG_REDACT_PII) return String(v == null ? '' : v);
+  var s = String(v == null ? '' : v);
+  if (!s) return '(vacio)';
+  if (s.length <= 2) return '**';
+  return s.substring(0, 2) + '**';
+}
+
+function redactTexto_(v) {
+  if (!LOG_REDACT_PII) return String(v == null ? '' : v);
+  var s = String(v == null ? '' : v);
+  if (!s) return '(vacio)';
+  var head = s.substring(0, Math.min(4, s.length));
+  return head + '...(' + s.length + ')';
+}
+
+function redactUrl_(v) {
+  if (!LOG_REDACT_PII) return String(v == null ? '' : v);
+  var s = String(v == null ? '' : v);
+  if (!s) return '(vacio)';
+  var m = s.match(/^(https?:\/\/[^\/]+)/i);
+  return m ? m[1] + '/...' : '(url)';
+}
 var REGEX_CASO_ASIGNADO = /caso\s+asignado\s+con\s+n[uú]mero[\s ]*\*?(\d+)\*?/i;
 
 // Límites de la copia a Drive. Si necesitás ampliarlos, cambialos acá:

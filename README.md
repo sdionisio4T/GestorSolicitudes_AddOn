@@ -342,6 +342,6 @@ Mientras el add-on esté en implementación de prueba, esta advertencia siempre 
 2. Aparece un texto pequeño tipo **"Ir a Gestor de Solicitudes (no seguro)"**. Haz clic ahí.
 3. Google muestra ahora sí la pantalla real de consentimiento con los cinco scopes. Aprueba y ya queda instalado.
 
-El correo que aparece en la advertencia como "desarrollador" (`sdionisio4@gmail.com` en el proyecto original) es simplemente la cuenta dueña del proyecto Apps Script; no expone ningún dato personal adicional al usuario que instala.
+El correo que aparece en la advertencia como "desarrollador" es simplemente la cuenta dueña del proyecto Apps Script; no expone ningún dato personal adicional al usuario que instala.
 
 Esta advertencia solo desaparecería si el add-on se publica formalmente en Marketplace y pasa por el proceso de verificación de Google, lo cual está fuera del alcance de la implementación de prueba.

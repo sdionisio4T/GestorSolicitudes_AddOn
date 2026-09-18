@@ -376,7 +376,7 @@ function guardarFormularioActivo_(messageId, datos) {
   if (!messageId || !datos) return;
   var payload = JSON.stringify({ messageId: messageId, datos: datos, ts: Date.now() });
   PropertiesService.getUserProperties().setProperty(FORMULARIO_ACTIVO_KEY_, payload);
-  console.log('[FormActivo] GUARDADO msg=' + messageId + ' caso=' + (datos.numeroCaso || '?'));
+  console.log('[FormActivo] GUARDADO msg=' + messageId + ' caso=' + redactCaso_(datos.numeroCaso));
 }
 
 function leerFormularioActivo_() {
@@ -484,7 +484,7 @@ function onDetectarCaso(e) {
   var body = message.getPlainBody();
   var asunto = message.getSubject();
 
-  console.log('[Detectar] Remitente: ' + remitente + ' | Asunto: ' + asunto + ' | Body: ' + (body ? body.length : 0) + ' chars');
+  console.log('[Detectar] Remitente: ' + redactEmail_(remitente) + ' | Asunto: ' + redactTexto_(asunto) + ' | Body: ' + (body ? body.length : 0) + ' chars');
 
   if (!esSolicitudValida(remitente, body)) {
     console.log('[Detectar] No es solicitud válida — descartado');
@@ -494,7 +494,7 @@ function onDetectarCaso(e) {
   }
 
   var datos = extraerDatos(body, asunto);
-  console.log('[Detectar] Extraído: caso=' + datos.numeroCaso + ' | servicio=' + datos.servicioDesplegar);
+  console.log('[Detectar] Extraído: caso=' + redactCaso_(datos.numeroCaso) + ' | servicio=' + redactTexto_(datos.servicioDesplegar));
 
   guardarFormularioActivo_(messageId, datos);
 

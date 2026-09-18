@@ -792,7 +792,7 @@ function construirRespuestaFinal_(e, input, resultado) {
   // Drive/Workspace. Van al final del toast, sin bloquear el envío.
   if (input.urlsExtraDescartadas.length > 0) {
     toastCopia += ' Ignoradas ' + input.urlsExtraDescartadas.length + ' URL(s) del campo extra por no ser de Drive/Workspace.';
-    console.warn('[Enviar] URLs extra descartadas: ' + input.urlsExtraDescartadas.join(' | '));
+    console.warn('[Enviar] URLs extra descartadas: ' + input.urlsExtraDescartadas.map(redactUrl_).join(' | '));
   }
 
   // URL directa a la primera fila recién escrita. Solo si tenemos

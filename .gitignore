@@ -3,6 +3,7 @@ contexto_proyecto_gestor_solicitudes.md
 documentacion_gestor_solicitudes.md
 roadmap_gestor_solicitudes.md
 roadmap_hardening.md
+aviso_privacidad.md
 
 # Archivos temporales / editores
 *.tmp
@@ -13,15 +14,13 @@ roadmap_hardening.md
 .DS_Store
 Thumbs.db
 
-# Configuración local de editores
+# Configuración local de editores / herramientas
 .vscode/
 .idea/
 
-# clasp — el scriptId es específico del proyecto Apps Script destino
-# (cada usuario configura su propio .clasp.json usando .clasp.json.example
-# como plantilla). El .claspignore sí se versiona porque es política
-# compartida del proyecto.
+# clasp — el scriptId es específico de tu cuenta corporativa
 .clasp.json
+
 
 # Dependencias de npm (ESLint). El código del add-on no corre en Node,
 # package.json y node_modules existen solo para lintar en local.
