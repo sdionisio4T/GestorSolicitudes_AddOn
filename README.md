@@ -132,6 +132,16 @@ No hace falta instalar `clasp` a mano: se declara como dependencia de desarrollo
 
 Con esta ruta creas tu propio proyecto Apps Script bajo tu cuenta, subes el código de este repo, y quedas listo para usar el add-on. No requiere GitHub Actions ni secrets.
 
+**Paso previo obligatorio:** habilita la **Google Apps Script API** en tu cuenta de Google. Es un switch de un solo clic que Google mantiene desactivado por defecto y que `clasp` necesita para crear y modificar proyectos desde línea de comandos:
+
+1. Abre [https://script.google.com/home/usersettings](https://script.google.com/home/usersettings).
+2. Activa el switch **"Google Apps Script API"** (ponlo en ON).
+3. Espera 1-2 minutos para que el cambio se propague.
+
+Sin este paso, `npm run setup` falla en `clasp create` con el mensaje `User has not enabled the Apps Script API`.
+
+Después:
+
 ```bash
 git clone <URL de este repositorio>
 cd "Gestor de Solicitudes"
@@ -144,6 +154,14 @@ El script `npm run setup` encadena tres pasos de `clasp`:
 1. **`clasp login`**: abre el navegador para que autorices a `clasp` con tu cuenta de Google. Guarda el token OAuth en `~/.clasprc.json` (en Windows: `C:\Users\TuUsuario\.clasprc.json`). Si ya estabas logueado antes, este paso se salta solo.
 2. **`clasp create --title "Gestor de Solicitudes" --type standalone`**: crea un proyecto Apps Script vacío en tu cuenta y genera `.clasp.json` en la raíz con el `scriptId` correspondiente.
 3. **`clasp push`**: sube todos los `.gs` y el `appsscript.json` al proyecto recién creado.
+
+**Interacción esperada durante el push:** en el paso 3, la primera vez que se sube el código, `clasp` detecta que el `appsscript.json` local es distinto al que Google generó por defecto en el proyecto vacío, y te pregunta:
+
+```
+? Manifest file has been updated. Do you want to push and overwrite? (y/N)
+```
+
+Escribe **`Y`** y presiona Enter. Es normal y esperado: estás confirmando que tu manifiesto (con los scopes OAuth, homepage triggers, logo, etc.) reemplace al placeholder vacío que trae el proyecto recién creado. Es la única confirmación interactiva del setup; después de eso, los `npm run push` posteriores no la vuelven a pedir salvo que cambies el manifiesto de nuevo.
 
 Al terminar, entra a [script.google.com](https://script.google.com) y verás el proyecto "Gestor de Solicitudes" con el código dentro. Desde ahí ya puedes instalarlo como implementación de prueba (ver sección **Distribución**).
 
@@ -307,3 +325,23 @@ Una vez que el tester tiene acceso al proyecto:
 4. Aceptar los permisos que pide Google (los cinco scopes declarados en `appsscript.json`).
 
 El add-on queda disponible en el panel lateral de Gmail y en Sheets para esa cuenta. Los cambios en el código quedan visibles la próxima vez que el tester recarga Gmail o reabre el add-on, sin necesidad de reinstalar.
+
+### Advertencia "Google no ha verificado esta aplicación"
+
+Durante el paso 4, antes de llegar a la pantalla de consentimiento con los cinco scopes, Google muestra una **pantalla intermedia roja** que dice:
+
+> Google no ha verificado esta aplicación
+>
+> La aplicación está solicitando acceso a información sensible de tu cuenta de Google. No deberías utilizar esta aplicación hasta que el desarrollador la verifique con Google.
+
+**Es normal y esperado.** Aparece porque el add-on está en modo de implementación de prueba, no publicado en el Google Workspace Marketplace, y por lo tanto **no ha pasado la verificación oficial del OAuth consent screen** que Google exige para uso público. Esta verificación implica un proceso formal (revisión de scopes, política de privacidad, video demo, dominio del desarrollador, entre otras cosas) que solo se hace cuando el add-on se publica al Marketplace.
+
+Mientras el add-on esté en implementación de prueba, esta advertencia siempre va a aparecer para cada usuario nuevo que lo instale. **Para continuar:**
+
+1. Haz clic en el enlace **"Configuración avanzada"** abajo a la izquierda.
+2. Aparece un texto pequeño tipo **"Ir a Gestor de Solicitudes (no seguro)"**. Haz clic ahí.
+3. Google muestra ahora sí la pantalla real de consentimiento con los cinco scopes. Aprueba y ya queda instalado.
+
+El correo que aparece en la advertencia como "desarrollador" (`sdionisio4@gmail.com` en el proyecto original) es simplemente la cuenta dueña del proyecto Apps Script; no expone ningún dato personal adicional al usuario que instala.
+
+Esta advertencia solo desaparecería si el add-on se publica formalmente en Marketplace y pasa por el proceso de verificación de Google, lo cual está fuera del alcance de la implementación de prueba.
