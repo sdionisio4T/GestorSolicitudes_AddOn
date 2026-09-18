@@ -96,14 +96,138 @@ Reglas:
 - La carpeta `<Caso>` es única por envío: si ya existía, se crea con sufijo `_2`, `_3`, etc.
 - Cuando un envío mezcla componentes API/APIM con otros, los mismos archivos se copian a ambas rutas, y cada fila del Sheet apunta a la carpeta que le corresponde por componente.
 
+## Uso en tu propia cuenta
+
+Si clonaste (o forkeaste) este repositorio y quieres instalar el add-on en tu propia cuenta de Google, hay dos rutas. La **Ruta A** es la recomendada para la mayoría de usuarios. La **Ruta C** es opcional y solo aplica si además quieres que cada `git push` a tu fork suba los cambios a tu Apps Script automáticamente.
+
+### Requisitos comunes a ambas rutas
+
+- [Node.js 18 o superior](https://nodejs.org) instalado. Incluye `npm` y `npx`, que son los que ejecutan todos los comandos de este flujo. Sin Node, ni `npm install` ni `npm run setup` funcionan. Para verificar si ya lo tienes, corre en terminal:
+
+  ```bash
+  node --version
+  npm --version
+  ```
+
+  Si te responde con números de versión, ya lo tienes. Si te dice que el comando no existe, instálalo de una de estas dos formas:
+
+  **Por terminal (recomendado en Windows 10/11):** `winget` viene preinstalado, y con un solo comando descarga e instala Node LTS:
+
+  ```powershell
+  winget install OpenJS.NodeJS.LTS
+  ```
+
+  Cierra y vuelve a abrir PowerShell para que reconozca los comandos `node` y `npm`. Si usas macOS con [Homebrew](https://brew.sh/) el equivalente es `brew install node`; en Linux con apt es `sudo apt install nodejs npm`.
+
+  **Por instalador gráfico:** descarga el instalador "LTS" desde [nodejs.org](https://nodejs.org), ejecútalo con las opciones por defecto, y reinicia la terminal.
+
+- [Git](https://git-scm.com/) instalado, para clonar el repositorio.
+- Una cuenta de Google donde vivirá tu copia del proyecto Apps Script.
+
+No hace falta instalar `clasp` a mano: se declara como dependencia de desarrollo en `package.json` y queda disponible después de `npm install`.
+
+**¿Y si no quieres o no puedes instalar Node?** Este flujo con `clasp` está pensado para colaboradores que van a modificar el código. Si solo quieres **usar** el add-on sin tocarlo, no necesitas Node ni clonar el repo: pídele al mantenedor del proyecto que te comparta acceso como tester al proyecto Apps Script existente (ver sección **Distribución** más abajo). Con ese acceso puedes instalar el add-on en tu cuenta directamente desde el editor web, sin línea de comandos.
+
+### Ruta A: instalación básica (una sola vez, todo local)
+
+Con esta ruta creas tu propio proyecto Apps Script bajo tu cuenta, subes el código de este repo, y quedas listo para usar el add-on. No requiere GitHub Actions ni secrets.
+
+```bash
+git clone <URL de este repositorio>
+cd "Gestor de Solicitudes"
+npm install
+npm run setup
+```
+
+El script `npm run setup` encadena tres pasos de `clasp`:
+
+1. **`clasp login`**: abre el navegador para que autorices a `clasp` con tu cuenta de Google. Guarda el token OAuth en `~/.clasprc.json` (en Windows: `C:\Users\TuUsuario\.clasprc.json`). Si ya estabas logueado antes, este paso se salta solo.
+2. **`clasp create --title "Gestor de Solicitudes" --type standalone`**: crea un proyecto Apps Script vacío en tu cuenta y genera `.clasp.json` en la raíz con el `scriptId` correspondiente.
+3. **`clasp push`**: sube todos los `.gs` y el `appsscript.json` al proyecto recién creado.
+
+Al terminar, entra a [script.google.com](https://script.google.com) y verás el proyecto "Gestor de Solicitudes" con el código dentro. Desde ahí ya puedes instalarlo como implementación de prueba (ver sección **Distribución**).
+
+Para subir cambios locales al proyecto Apps Script en el futuro:
+
+```bash
+npm run push
+```
+
+Para bajar cambios hechos directamente en el editor web:
+
+```bash
+npm run pull
+```
+
+**Notas:**
+
+- Si `.clasp.json` ya existe en la raíz del repo (por ejemplo, quedó de una prueba anterior), `clasp create` falla. Borra el archivo antes de correr `npm run setup` de nuevo, o edítalo a mano con el `scriptId` que quieras usar.
+- La configuración por usuario (`SHEET_ID`, `SHEET_TAB`, `CARPETA_RAIZ_ID`) se define desde el propio add-on la primera vez que lo abres, no desde el repositorio. Ver sección **Configuración por usuario**.
+
+### Ruta C: deploy automático desde tu fork (opcional)
+
+Con esta ruta, además de tener el add-on instalado localmente, configuras GitHub Actions en tu fork para que cada push a `main` suba automáticamente el código a tu Apps Script. Requiere haber completado antes la Ruta A.
+
+**Pasos:**
+
+1. Haz fork de este repositorio en tu cuenta de GitHub.
+2. Clónalo local y ejecuta la Ruta A completa. Al final tendrás dos archivos con credenciales:
+   - `~/.clasprc.json` (token OAuth de tu cuenta Google).
+   - `.clasp.json` (con el `scriptId` de tu proyecto Apps Script).
+3. En tu fork, ve a **Settings → Secrets and variables → Actions → New repository secret** y crea los dos secrets:
+
+   | Nombre del secret | Contenido |
+   |---|---|
+   | `CLASPRC_JSON` | Contenido completo del archivo `~/.clasprc.json` (en Windows: `C:\Users\TuUsuario\.clasprc.json`). |
+   | `CLASP_JSON` | Contenido completo del archivo `.clasp.json` que quedó en la raíz del repo. |
+
+   **Cómo copiar el contenido en Windows (PowerShell):**
+
+   Primero, verifica que los dos archivos existan. El `-Force` es necesario para `.clasprc.json` porque empieza con punto y por defecto PowerShell no muestra archivos ocultos:
+
+   ```powershell
+   cd "C:\ruta\a\Gestor de Solicitudes"
+   Test-Path $env:USERPROFILE\.clasprc.json
+   Test-Path .clasp.json
+   ```
+
+   Si ambos comandos responden `True`, cópialos al portapapeles uno a uno y pégalos en GitHub con **Ctrl+V**:
+
+   ```powershell
+   Get-Content $env:USERPROFILE\.clasprc.json | Set-Clipboard
+   # Pegar en el secret CLASPRC_JSON con Ctrl+V, luego "Add secret"
+
+   Get-Content .clasp.json | Set-Clipboard
+   # Pegar en el secret CLASP_JSON con Ctrl+V, luego "Add secret"
+   ```
+
+   **Cómo copiar el contenido en macOS o Linux:**
+
+   ```bash
+   # macOS
+   cat ~/.clasprc.json | pbcopy
+   cat .clasp.json | pbcopy
+
+   # Linux (requiere xclip instalado)
+   cat ~/.clasprc.json | xclip -selection clipboard
+   cat .clasp.json | xclip -selection clipboard
+   ```
+
+4. Confirma que el workflow `.github/workflows/deploy.yml` corre sobre `main`.
+5. Haz un `git push` a `main` de tu fork. El workflow arranca solo y sube el código a tu Apps Script.
+
+**Comportamiento en forks sin secrets configurados:** el workflow detecta que faltan los secrets y termina en verde sin intentar el push, mostrando un aviso en el log. Es decir, un fork recién clonado no rompe su pestaña Actions con errores en rojo; simplemente el deploy automático queda desactivado hasta que agregues los secrets.
+
+**Rotación de credenciales:** si el token OAuth de `CLASPRC_JSON` deja de funcionar (Google los revoca eventualmente), corre `clasp login` en local para regenerar el archivo y actualiza el valor del secret con el contenido nuevo. El secret se puede editar sin borrarlo, desde la misma pantalla donde lo creaste.
+
 ## Desarrollo local
 
-El código del add-on corre en Apps Script, no en Node. `package.json` existe únicamente para poder lintar los `.gs` con ESLint en local.
+El código del add-on corre en Apps Script, no en Node. `package.json` existe únicamente para poder lintar los `.gs` con ESLint en local y ejecutar los comandos de `clasp`.
 
 ### Requisitos
 
-- Node.js (para clasp y ESLint).
-- [`@google/clasp`](https://github.com/google/clasp) instalado globalmente.
+- Node.js 18+ (incluye `npm` y `npx`).
+- Las dependencias del repo (`clasp`, ESLint, plugins) se instalan con `npm install` y quedan bajo `node_modules/`. No requiere instalación global.
 
 ### Sincronización con Apps Script
 

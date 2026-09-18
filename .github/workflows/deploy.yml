@@ -9,8 +9,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Verifica que los secrets necesarios esten configurados. En forks recien
+  # clonados los secrets no existen y el push a Apps Script no puede correr;
+  # en ese caso este job termina en verde y el deploy se omite en vez de
+  # fallar en rojo. Ver README, seccion "Uso en tu propia cuenta".
+  check-secrets:
+    name: Verificar secrets
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          HAS_CLASP_JSON: ${{ secrets.CLASP_JSON != '' }}
+          HAS_CLASPRC_JSON: ${{ secrets.CLASPRC_JSON != '' }}
+        run: |
+          if [ "$HAS_CLASP_JSON" = "true" ] && [ "$HAS_CLASPRC_JSON" = "true" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secrets CLASP_JSON y/o CLASPRC_JSON no configurados. Deploy automatico omitido. Ver README, seccion Uso en tu propia cuenta."
+          fi
+
   deploy:
     name: clasp push a GestorSolicitudes_AddOn
+    needs: check-secrets
+    if: needs.check-secrets.outputs.configured == 'true'
     runs-on: ubuntu-latest
 
     steps:
