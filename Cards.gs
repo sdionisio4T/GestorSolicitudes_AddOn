@@ -995,22 +995,6 @@ function buildPanelConfiguracionCard() {
   return card.build();
 }
 
-function buildConfigExitoCard(nombreCarpeta) {
-  return CardService.newCardBuilder()
-    .setHeader(
-      CardService.newCardHeader()
-        .setTitle('Configuración guardada')
-    )
-    .addSection(
-      CardService.newCardSection()
-        .addWidget(
-          CardService.newTextParagraph()
-            .setText('Todo listo. Los envíos se van a registrar en el Sheet elegido y los archivos de documentación se van a copiar en <b>' + nombreCarpeta + '</b>, dentro de la estructura Servicio/Caso.\n\nAbre un correo de solicitud para comenzar.')
-        )
-    )
-    .build();
-}
-
 function extraerSheetIdDeUrl(url) {
   var match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
   if (match) {

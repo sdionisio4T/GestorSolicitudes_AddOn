@@ -164,15 +164,9 @@ function onCrearHeaders(e) {
       siguienteCard = buildSeleccionCarpetaRaizCard(null);
       mensaje = 'Cabeceras creadas. Ahora elegí la carpeta raíz.';
     } else {
-      // Ya está todo listo — mostramos la card de éxito con el nombre de
-      // la carpeta configurada, para cerrar el wizard.
-      var nombreCarpeta = '';
-      try {
-        nombreCarpeta = DriveApp.getFolderById(obtenerCarpetaRaizId()).getName();
-      } catch (errNombre) {
-        nombreCarpeta = '(carpeta configurada)';
-      }
-      siguienteCard = buildConfigExitoCard(nombreCarpeta);
+      // Wizard completo: caemos directo al menú principal para que el
+      // usuario tenga a mano todas las opciones sin pasos intermedios.
+      siguienteCard = buildHomepageCard(null, null, leerFormularioActivo_());
       mensaje = 'Cabeceras creadas. Configuración completa.';
     }
     return CardService.newActionResponseBuilder()
@@ -199,22 +193,23 @@ function onSaltearCrearHeaders(e) {
   // wizard con la card de éxito. Si falta la carpeta, seguimos al paso 3.
   var estadoPostSaltear = estadoConfig();
   var siguienteCard;
+  var mensaje = null;
   if (estadoPostSaltear.paso === 'sin_carpeta' || estadoPostSaltear.paso === 'carpeta_inaccesible') {
     siguienteCard = buildSeleccionCarpetaRaizCard(null);
   } else {
-    var nombreCarpeta = '';
-    try {
-      nombreCarpeta = DriveApp.getFolderById(obtenerCarpetaRaizId()).getName();
-    } catch (errNombre) {
-      nombreCarpeta = '(carpeta configurada)';
-    }
-    siguienteCard = buildConfigExitoCard(nombreCarpeta);
+    siguienteCard = buildHomepageCard(null, null, leerFormularioActivo_());
+    mensaje = 'Configuración completa.';
   }
-  return CardService.newActionResponseBuilder()
+  var responseBuilder = CardService.newActionResponseBuilder()
     .setNavigation(
       CardService.newNavigation().updateCard(siguienteCard)
-    )
-    .build();
+    );
+  if (mensaje) {
+    responseBuilder.setNotification(
+      CardService.newNotification().setText(mensaje)
+    );
+  }
+  return responseBuilder.build();
 }
 
 function onGuardarCarpetaRaiz(e) {
@@ -288,7 +283,9 @@ function onGuardarCarpetaRaiz(e) {
 
     return responseBuilder
       .setNavigation(
-        CardService.newNavigation().pushCard(buildConfigExitoCard(nombreCarpeta))
+        CardService.newNavigation()
+          .popToRoot()
+          .updateCard(buildHomepageCard(null, null, leerFormularioActivo_()))
       )
       .build();
 
