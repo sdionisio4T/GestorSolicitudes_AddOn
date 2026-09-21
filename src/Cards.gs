@@ -208,7 +208,7 @@ function buildValidacionCard(datos, messageId, seleccion, envioEnCursoId, envioE
       var e0 = editablesCaso[0];
       seccionEditables.addWidget(
         CardService.newTextParagraph()
-          .setText('✏️ <b>Este caso ya tiene un envío editable</b> (' + e0.estado + '). Podés modificarlo en vez de crear uno nuevo.')
+          .setText('✏️ <b>Este caso ya tiene un envío editable</b> (' + e0.estado + '). Puedes modificarlo en vez de crear uno nuevo.')
       );
       seccionEditables.addWidget(
         CardService.newTextButton()
@@ -224,7 +224,7 @@ function buildValidacionCard(datos, messageId, seleccion, envioEnCursoId, envioE
     } else {
       seccionEditables.addWidget(
         CardService.newTextParagraph()
-          .setText('✏️ <b>Este caso ya tiene ' + editablesCaso.length + ' envíos editables.</b> Podés modificar alguno en vez de crear uno nuevo.')
+          .setText('✏️ <b>Este caso ya tiene ' + editablesCaso.length + ' envíos editables.</b> Puedes modificar alguno en vez de crear uno nuevo.')
       );
       seccionEditables.addWidget(
         CardService.newTextButton()
@@ -313,7 +313,7 @@ function buildValidacionCard(datos, messageId, seleccion, envioEnCursoId, envioE
     var checksDrive = CardService.newSelectionInput()
       .setType(CardService.SelectionInputType.CHECK_BOX)
       .setTitle(urlsDrive.length === 1
-        ? 'Drive documentación (desmarcá para reemplazar)'
+        ? 'Drive documentación (desmarca para reemplazar)'
         : 'Drive documentación (selecciona los que aplican)')
       .setFieldName('driveDocumentacion');
     var drivesSeleccionados = seleccion.driveDocumentacion || urlsDrive;
@@ -521,7 +521,7 @@ function buildNoAplicaCard() {
       CardService.newCardSection()
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Este correo no contiene una solicitud de caso. Si aun así querés registrar un caso, podés llenar el formulario a mano con el botón de abajo.')
+            .setText('Este correo no contiene una solicitud de caso. Si aun así quieres registrar un caso, puedes llenar el formulario a mano con el botón de abajo.')
         )
         .addWidget(
           CardService.newTextButton()
@@ -601,7 +601,7 @@ function buildConfigCard(mostrarBorrar, mensajeError) {
               CardService.newTextParagraph()
                 .setText(
                   '<b>⚠ Hay ' + conteo.total + ' envío(s) apuntando al Sheet actual</b> (' + detalle + ').\n\n' +
-                  'Si cambiás la configuración ahora, esos envíos van a seguir escribiendo en el <b>Sheet actual</b> (no en el nuevo). Ningún reintento se pierde ni se cancela.'
+                  'Si cambias la configuración ahora, esos envíos van a seguir escribiendo en el <b>Sheet actual</b> (no en el nuevo). Ningún reintento se pierde ni se cancela.'
                 )
             )
         );
@@ -902,7 +902,7 @@ function buildPanelConfiguracionCard() {
             CardService.newTextParagraph()
               .setText(
                 '<b>⚠ Hay ' + conteo.total + ' envío(s) apuntando al Sheet/carpeta actual</b> (' + detalle + ').\n\n' +
-                'Si cambiás la configuración ahora, esos envíos siguen usando los valores <b>actuales</b> (no los nuevos). Ningún reintento se pierde.'
+                'Si cambias la configuración ahora, esos envíos siguen usando los valores <b>actuales</b> (no los nuevos). Ningún reintento se pierde.'
               )
           )
       );
@@ -981,7 +981,7 @@ function buildPanelConfiguracionCard() {
     CardService.newCardSection()
       .addWidget(
         CardService.newTextParagraph()
-          .setText('<i>Si querés arrancar la configuración desde cero (borra Sheet, pestaña y carpeta) usá el botón de abajo.</i>')
+          .setText('<i>Si quieres arrancar la configuración desde cero (borra Sheet, pestaña y carpeta) usa el botón de abajo.</i>')
       )
       .addWidget(
         CardService.newTextButton()

@@ -104,8 +104,8 @@ function buildHomepageCard(messageIdVolver, messageIdDetectar, activo) {
         .addWidget(
           CardService.newTextParagraph()
             .setText(messageIdDetectar
-              ? 'Presioná <b>Detectar caso</b> para leer este correo y armar el envío. Si el caso ya existe, vas a ver los envíos previos y podés modificarlos en vez de duplicar.'
-              : 'Abrí un correo de solicitud y presioná <b>Detectar caso</b>. Desde acá también podés gestionar los envíos existentes.')
+              ? 'Presiona <b>Detectar caso</b> para leer este correo y armar el envío. Si el caso ya existe, vas a ver los envíos previos y puedes modificarlos en vez de duplicar.'
+              : 'Abre un correo de solicitud y presiona <b>Detectar caso</b>. Desde este panel también puedes gestionar los envíos existentes.')
         )
     )
     // ── Nuevo envío ──
@@ -559,20 +559,20 @@ function buildElegirAccionCasoCard(datos, messageId, editablesCaso, manuales) {
           CardService.newTextParagraph()
             .setText('⚠️ <b>' + manuales.length + ' fila' + (manuales.length === 1 ? '' : 's') +
               ' manual' + (manuales.length === 1 ? '' : 'es') +
-              '</b> (sin ID de envío) para este caso. Revisá antes de duplicar:')
+              '</b> (sin ID de envío) para este caso. Revisa antes de duplicar:')
         )
         .addWidget(
           CardService.newTextParagraph().setText(resumenManual)
         )
         .addWidget(
           CardService.newTextParagraph()
-            .setText('<i>No se pueden editar desde el add-on porque les falta el ID de envío. Si querés modificarlas, hacelo directo en el Sheet.</i>')
+            .setText('<i>No se pueden editar desde el add-on porque les falta el ID de envío. Si quieres modificarlas, hazlo directo en el Sheet.</i>')
         )
     );
   }
 
   // ── Opciones ──
-  var seccionAcciones = CardService.newCardSection().setHeader('¿Qué querés hacer?');
+  var seccionAcciones = CardService.newCardSection().setHeader('¿Qué quieres hacer?');
 
   if (editablesCaso.length > 0) {
     var accionEditar;

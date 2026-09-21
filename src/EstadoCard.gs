@@ -301,7 +301,7 @@ function buildEstadoEnvioCard(envioId, opts) {
       lineas.push('Esperando el primer reintento (arranca en 1 a 15 segundos).');
     }
     lineas.push('');
-    lineas.push('<i>El proceso corre en el servidor de Google. Podés cerrar Gmail; cuando vuelvas, presioná <b>Actualizar</b> para ver el progreso.</i>');
+    lineas.push('<i>El proceso corre en el servidor de Google. Puedes cerrar Gmail; cuando vuelvas, presiona <b>Actualizar</b> para ver el progreso.</i>');
     seccionEstado.addWidget(CardService.newTextParagraph().setText(lineas.join('<br>')));
 
     if (estadoSheet && estadoSheet.textoL) {
@@ -332,7 +332,7 @@ function buildEstadoEnvioCard(envioId, opts) {
           .setText('<b>🔓 Terminado. Esperando acceso a ' + n + ' enlace' + (n === 1 ? '' : 's') + '.</b><br><br>' +
                    'Archivos copiados: <b>' + (terminado.copiadosFinales || 0) + '</b>.<br>' +
                    'Enlaces sin copiar por falta de permiso: <b>' + n + '</b>.<br><br>' +
-                   '<i>Pedile acceso al dueño de esos archivos. Cuando lo tengas, presioná <b>Reintentar copia</b>.</i>')
+                   '<i>Pídele acceso al dueño de esos archivos. Cuando lo tengas, presiona <b>Reintentar copia</b>.</i>')
       );
 
       // Mostrar la lista de URLs para que el usuario sepa cuáles pedir.
@@ -609,7 +609,7 @@ function buildListaEnviosEnCursoCard(opts) {
         )
         .addWidget(
           CardService.newTextParagraph()
-            .setText('<i>Los envíos aparecen acá cuando la copia inicial no terminó (están reintentando en segundo plano) o cuando quedaron enlaces esperando que te den acceso a Drive.</i>')
+            .setText('<i>Los envíos aparecen aquí cuando la copia inicial no terminó (están reintentando en segundo plano) o cuando quedaron enlaces esperando que te den acceso a Drive.</i>')
         )
     );
     // Botón Actualizar aún vacío también, por si querés refrescar por
@@ -713,7 +713,7 @@ function buildListaEnviosEnCursoCard(opts) {
     if (terminados.length >= 2) {
       seccionEsp.addWidget(
         CardService.newTextParagraph().setText(
-          '<i>Si sabés que ninguno se va a resolver (docs borrados, dueños que ya no están, etc.) podés sacarlos todos de una vez.</i>'
+          '<i>Si sabes que ninguno se va a resolver (docs borrados, dueños que ya no están, etc.) puedes sacarlos todos de una vez.</i>'
         )
       );
       seccionEsp.addWidget(
@@ -842,7 +842,7 @@ function onReintentarCopiaManual(e) {
   if (terminado.esCarpetaDestino) {
     return CardService.newActionResponseBuilder()
       .setNotification(
-        CardService.newNotification().setText('El problema es la carpeta destino, no los enlaces. Andá a "Configuración" y cambiá la carpeta raíz.')
+        CardService.newNotification().setText('El problema es la carpeta destino, no los enlaces. Ve a "Configuración" y cambia la carpeta raíz.')
       )
       .build();
   }

@@ -778,10 +778,10 @@ function construirRespuestaFinal_(e, input, resultado) {
     if (resultado.seReintentaEnSegundoPlano) {
       toastCopia += ' Reintentando en segundo plano.';
     } else if (resultado.hayPendientesDeAcceso) {
-      toastCopia += ' Los enlaces sin acceso los podés reintentar desde el add-on en "Envíos".';
+      toastCopia += ' Los enlaces sin acceso los puedes reintentar desde el add-on en "Envíos".';
     }
   } else if (resultado.hayPendientesDeAcceso && !resultado.seReintentaEnSegundoPlano) {
-    toastCopia = ' No se copiaron los archivos por falta de permisos. Podés reintentarlo desde el add-on en "Envíos" cuando tengas acceso.';
+    toastCopia = ' No se copiaron los archivos por falta de permisos. Puedes reintentarlo desde el add-on en "Envíos" cuando tengas acceso.';
   } else if (resultado.seReintentaEnSegundoPlano) {
     toastCopia = ' Sin copiar en la primera pasada. Reintentando en segundo plano.';
   } else {
@@ -939,7 +939,7 @@ function validarInputPostConfig_(input) {
     return CardService.newActionResponseBuilder()
       .setNotification(
         CardService.newNotification()
-          .setText('El correo del solicitante no tiene un formato válido. Dejalo vacío si no lo tenés.')
+          .setText('El correo del solicitante no tiene un formato válido. Déjalo vacío si no lo tienes.')
       )
       .build();
   }

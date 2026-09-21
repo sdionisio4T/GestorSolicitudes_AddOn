@@ -392,7 +392,7 @@ function buildEdicionCard(solicitud, opts) {
   if (puedeElegirComponente) {
     seccionCfg.addWidget(
       CardService.newTextParagraph()
-        .setText('<i>Este envío no tiene componente. Podés asignarle uno si querés (opcional).</i>')
+        .setText('<i>Este envío no tiene componente. Puedes asignarle uno si quieres (opcional).</i>')
     );
     var dropdownComp = CardService.newSelectionInput()
       .setType(CardService.SelectionInputType.DROPDOWN)
@@ -452,7 +452,7 @@ function buildEdicionCard(solicitud, opts) {
         .setHeader('Drive (opcional)')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Este envío se registró <b>sin enlaces de Drive</b>. Si querés agregar archivos ahora, pegá una URL por línea. Al guardar se van a copiar a la carpeta correspondiente.')
+            .setText('Este envío se registró <b>sin enlaces de Drive</b>. Si quieres agregar archivos ahora, pega una URL por línea. Al guardar se van a copiar a la carpeta correspondiente.')
         )
         .addWidget(
           CardService.newTextInput()
@@ -552,7 +552,7 @@ function buildListaEditablesCard(opts) {
         )
         .addWidget(
           CardService.newTextParagraph()
-            .setText('<i>Las solicitudes borradas del Sheet no aparecen acá — se recuperan solo desde el historial de versiones del archivo.</i>')
+            .setText('<i>Las solicitudes borradas del Sheet no aparecen aquí; se recuperan solo desde el historial de versiones del archivo.</i>')
         )
     );
   } else {
@@ -703,7 +703,7 @@ function onGuardarEdicion(e) {
   var correo = leerInput(formInputs, 'correoSolicitante').trim();
   if (correo && !REGEX_EMAIL.test(correo)) {
     return CardService.newActionResponseBuilder()
-      .setNotification(CardService.newNotification().setText('El correo solicitante no tiene un formato válido. Dejalo vacío si no lo tenés.'))
+      .setNotification(CardService.newNotification().setText('El correo solicitante no tiene un formato válido. Déjalo vacío si no lo tienes.'))
       .build();
   }
 
