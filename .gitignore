@@ -1,9 +1,5 @@
-# Documentación interna del mantenedor — no forma parte del producto
-contexto_proyecto_gestor_solicitudes.md
-documentacion_gestor_solicitudes.md
-roadmap_gestor_solicitudes.md
-roadmap_hardening.md
-aviso_privacidad.md
+# Documentacion interna del mantenedor, no forma parte del producto
+docs/
 
 # Archivos temporales / editores
 *.tmp
@@ -14,15 +10,15 @@ aviso_privacidad.md
 .DS_Store
 Thumbs.db
 
-# Configuración local de editores / herramientas
+# Configuracion local de editores / herramientas
 .vscode/
 .idea/
 
-# clasp — el scriptId es específico de tu cuenta corporativa
+# clasp, el scriptId es especifico de tu cuenta corporativa
 .clasp.json
 
 
-# Dependencias de npm (ESLint). El código del add-on no corre en Node,
+# Dependencias de npm (ESLint). El codigo del add-on no corre en Node,
 # package.json y node_modules existen solo para lintar en local.
 node_modules/
 npm-debug.log

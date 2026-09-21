@@ -4,7 +4,7 @@
   "private": true,
   "description": "Google Workspace Add-on para gestionar solicitudes de despliegue. Este package.json es solo para lintar el codigo con ESLint y correr clasp; el add-on corre en Apps Script, no en Node.",
   "scripts": {
-    "lint": "eslint --ext .gs .",
+    "lint": "eslint --ext .gs src/",
     "setup": "clasp login && clasp create --title \"Gestor de Solicitudes\" --type standalone && clasp push",
     "push": "clasp push",
     "pull": "clasp pull"

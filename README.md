@@ -16,36 +16,40 @@ Google Workspace Add-on (Gmail + Sheets) que automatiza el registro de solicitud
 
 ## Estructura del proyecto
 
+Todo el código del add-on vive en `src/`. Los archivos `.gs` de Apps Script comparten un único scope global, así que la separación es únicamente organizacional.
+
 | Archivo | Descripción |
 |---|---|
-| `Main.gs` | Triggers de entrada: `onHomepage`, `onHomepageSheets`, `onGmailMessageOpen`. Handler `onDetectarCaso` (botón manual), navegación cruzada correo ↔ menú principal, y persistencia del formulario activo (`UserProperties`) para no perder el estado al cambiar de correo o ir al inbox. |
-| `Auth.gs` | Chequeo de scopes OAuth. Tarjeta de autorización requerida. |
-| `Config.gs` | Configuración global (`CONFIG`) y helpers de `UserProperties` (Sheet, pestaña, carpeta raíz). |
-| `ConfigHandlers.gs` | Handlers de los botones del wizard, panel de configuración y ayuda. |
-| `Extractor.gs` | Detección de solicitud y extracción de campos del cuerpo del correo. |
-| `Cards.gs` | Builders puros de las tarjetas de la UI. |
-| `Ayuda.gs` | Contenido de la card de ayuda del add-on. |
-| `Diagnostico.gs` | Panel de diagnóstico y reset total. |
-| `SheetWriter.gs` | Orquestador de `onEnviar` y helpers de escritura, copia y consolidación. |
-| `DriveCopier.gs` | Copia de carpetas y archivos del correo a la carpeta destino, con manejo de permisos. |
-| `Reintentos.gs` | Reintentos en segundo plano vía triggers programados. |
-| `EstadoCard.gs` | Tarjeta de estado de envíos y lista de envíos abiertos. |
-| `EditarSolicitud.gs` | Editor de solicitudes ya guardadas (in-place, sin duplicar filas). |
-| `Tests.gs` | Tests unitarios de helpers puros (regex, columnas, parsing). |
-| `appsscript.json` | Manifiesto del add-on: scopes OAuth, triggers, logo, dominios permitidos. |
+| `src/Main.gs` | Triggers de entrada: `onHomepage`, `onHomepageSheets`, `onGmailMessageOpen`. Handler `onDetectarCaso` (botón manual), navegación cruzada correo ↔ menú principal, y persistencia del formulario activo (`UserProperties`) para no perder el estado al cambiar de correo o ir al inbox. |
+| `src/Auth.gs` | Chequeo de scopes OAuth. Tarjeta de autorización requerida. |
+| `src/Config.gs` | Configuración global (`CONFIG`) y helpers de `UserProperties` (Sheet, pestaña, carpeta raíz). |
+| `src/ConfigHandlers.gs` | Handlers de los botones del wizard, panel de configuración y ayuda. |
+| `src/Extractor.gs` | Detección de solicitud y extracción de campos del cuerpo del correo. |
+| `src/Cards.gs` | Builders puros de las tarjetas de la UI. |
+| `src/Ayuda.gs` | Contenido de la card de ayuda del add-on. |
+| `src/Diagnostico.gs` | Panel de diagnóstico y reset total. |
+| `src/SheetWriter.gs` | Orquestador de `onEnviar` y helpers de escritura, copia y consolidación. |
+| `src/DriveCopier.gs` | Copia de carpetas y archivos del correo a la carpeta destino, con manejo de permisos. |
+| `src/Reintentos.gs` | Reintentos en segundo plano vía triggers programados. |
+| `src/EstadoCard.gs` | Tarjeta de estado de envíos y lista de envíos abiertos. |
+| `src/EditarSolicitud.gs` | Editor de solicitudes ya guardadas (in-place, sin duplicar filas). |
+| `src/Tests.gs` | Tests unitarios de helpers puros (regex, columnas, parsing). |
+| `src/appsscript.json` | Manifiesto del add-on: scopes OAuth, triggers, logo, dominios permitidos. |
 
 ## Estructura del repositorio
 
-Además de los archivos `.gs` de código, el repositorio contiene:
+Además del código en `src/`, el repositorio contiene:
 
 | Ubicación | Descripción |
 |---|---|
-| `.github/workflows/deploy.yml` | Workflow de GitHub Actions que lintea y sube el código a Apps Script en cada push a `main`. |
+| `src/` | Código fuente del add-on (`.gs` + `appsscript.json`). `clasp` toma esta carpeta como raíz de push (ver `rootDir` en `.clasp.json`). |
+| `docs/` | Documentación interna del mantenedor (contexto del proyecto, roadmap, aviso de privacidad). No se versiona en git ni se sube a Apps Script. |
 | `assets/` | Assets estáticos del proyecto (por ejemplo el ícono del add-on). Se guardan aquí como fuente de verdad versionada, aunque el logo servido por el add-on en runtime se sirve desde una URL pública configurada en `appsscript.json`. |
-| `.clasp.json.example` | Plantilla del archivo `.clasp.json` con el `scriptId` como placeholder. Cada colaborador la copia como `.clasp.json` local y la completa con el ID del proyecto que le corresponde. |
+| `secrets/` | Plantillas de `CLASP_JSON` y `CLASPRC_JSON`. Cada colaborador reemplaza los placeholders con sus valores reales y las usa para dos cosas: (1) `CLASP_JSON` se copia como `.clasp.json` local para trabajar con clasp desde la máquina, y (2) ambos archivos se pegan como secrets del repo en GitHub Actions para que el workflow de deploy pueda hacer `clasp push`. |
+| `.github/workflows/deploy.yml` | Workflow de GitHub Actions que lintea y sube el código a Apps Script en cada push a `main`. |
 | `.claspignore` | Lista de archivos que `clasp push` no debe subir al editor web de Apps Script. Versionada porque es política común del proyecto. |
 | `.eslintrc.js` | Configuración de ESLint con reglas de calidad de código y de seguridad (`eslint-plugin-security`) para los archivos `.gs`. |
-| `.gitignore` | Archivos y carpetas que git ignora (incluye `.clasp.json`, dependencias de npm, documentación interna del mantenedor, entre otros). |
+| `.gitignore` | Archivos y carpetas que git ignora (incluye `.clasp.json`, dependencias de npm, `docs/`, entre otros). |
 | `package.json` y `package-lock.json` | Declaración y versiones exactas de dependencias de npm. El proyecto solo usa npm para lintear en local y en CI. El add-on no corre en Node. |
 | `README.md` | Este archivo. |
 
@@ -62,6 +66,21 @@ El add-on declara cinco scopes en `appsscript.json`:
 | `script.scriptapp` | Programar triggers de reintento para copias fallidas. |
 
 Google solicita todos los scopes juntos al instalar. `Auth.gs` muestra una tarjeta que explica cada permiso antes de disparar el consentimiento nativo.
+
+## Privacidad y logs
+
+El add-on es una herramienta interna de uso corporativo. **No procesa datos clínicos ni información de pacientes**: opera solamente sobre correos internos del proceso de despliegues de software (número de caso, servicio, ambiente, URLs de documentación técnica, correo corporativo del colaborador que radica la solicitud).
+
+Aun así, los correos corporativos identifican indirectamente a un colaborador y por lo tanto son datos personales bajo el artículo 3 de la Ley 1581 de 2012. Por eso el código incluye redacción de datos personales en los registros de ejecución (`console.log` que van al panel de Ejecuciones de Apps Script):
+
+- **Bandera `LOG_REDACT_PII`** en `Config.gs`, activada por defecto.
+- **Helpers** `redactEmail_`, `redactCaso_`, `redactTexto_`, `redactUrl_` que enmascaran los valores antes de imprimirlos.
+- Ejemplo: `juan.perez@keralty.com` aparece como `j***@k***.com`, un caso `1234` como `12**`, un servicio `Producción` como `Prod...(10)`, una URL de Drive como `https://drive.google.com/...` sin el ID del documento.
+- Los identificadores internos (`envioId`, `messageId`, IDs de trigger, contadores) se registran sin enmascarar porque no son datos personales y son necesarios para trazar el flujo entre ejecuciones.
+
+Para depuración local sobre datos ficticios se puede poner `LOG_REDACT_PII = false` temporalmente. **No dejarlo en false en producción.**
+
+El aviso de privacidad completo para el usuario (identidad del responsable, finalidades, derechos, canal para ejercerlos según el artículo 14 del Decreto 1377 de 2013) se mantiene aparte y no forma parte del repositorio versionado.
 
 ## Configuración por usuario
 
@@ -257,12 +276,14 @@ clasp pull           # bajar cambios hechos en el editor web
 clasp push           # subir cambios locales al editor web
 ```
 
-El archivo `.clasp.json` contiene el `scriptId` (el identificador del proyecto Apps Script destino) y está excluido del repositorio porque puede diferir entre colaboradores (por ejemplo, cada uno con su propio proyecto de desarrollo). Se provee `.clasp.json.example` como plantilla:
+El archivo `.clasp.json` contiene el `scriptId` (el identificador del proyecto Apps Script destino) y está excluido del repositorio porque puede diferir entre colaboradores (por ejemplo, cada uno con su propio proyecto de desarrollo). Se usa `secrets/CLASP_JSON` como plantilla:
 
 ```bash
-cp .clasp.json.example .clasp.json
+cp secrets/CLASP_JSON .clasp.json
 # editar .clasp.json y reemplazar TU_SCRIPT_ID_AQUI por el scriptId real
 ```
+
+El mismo archivo `secrets/CLASP_JSON` (con el `scriptId` real) es el contenido que se pega como el secret `CLASP_JSON` en GitHub para que el workflow de deploy pueda hacer `clasp push`.
 
 El `scriptId` se obtiene del editor de Apps Script en **Configuración del proyecto → ID de secuencia de comandos**.
 
