@@ -1,0 +1,75 @@
+name: Bootstrap Apps Script project
+
+# Solo se dispara a mano desde la pestana Actions.
+# Crea un proyecto nuevo de Apps Script en la cuenta Google del secret
+# CLASPRC_JSON e imprime el scriptId al final para que lo copies al
+# secret CLASP_JSON. No hace commits.
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: 'Titulo del proyecto Apps Script'
+        required: true
+        default: 'Gestor de Solicitudes'
+
+jobs:
+  bootstrap:
+    name: clasp create
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      - name: Verify CLASPRC_JSON secret
+        env:
+          HAS_CLASPRC: ${{ secrets.CLASPRC_JSON != '' }}
+        run: |
+          if [ "$HAS_CLASPRC" != "true" ]; then
+            echo "::error::Falta el secret CLASPRC_JSON. Configuralo antes de correr este workflow."
+            exit 1
+          fi
+
+      - name: Restore clasp auth
+        run: echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
+
+      - name: Create Apps Script project
+        run: clasp create --title "${{ inputs.title }}" --type standalone
+
+      - name: Set rootDir to src
+        run: |
+          node -e "const fs=require('fs');const p='.clasp.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.rootDir='src';fs.writeFileSync(p,JSON.stringify(j,null,2));"
+
+      - name: Print scriptId and next steps
+        run: |
+          SCRIPT_ID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.clasp.json','utf8')).scriptId)")
+          CLASP_JSON_CONTENT=$(cat .clasp.json)
+          {
+            echo "## Proyecto creado"
+            echo ""
+            echo "**scriptId:** \`$SCRIPT_ID\`"
+            echo ""
+            echo "**URL del editor:** https://script.google.com/d/$SCRIPT_ID/edit"
+            echo ""
+            echo "### Siguiente paso"
+            echo ""
+            echo "Copia este contenido y actualiza el secret **CLASP_JSON** del repo:"
+            echo ""
+            echo "\`\`\`json"
+            echo "$CLASP_JSON_CONTENT"
+            echo "\`\`\`"
+            echo ""
+            echo "Despues de eso, el workflow \`deploy.yml\` empujara el codigo al proyecto en cada push a main."
+          } >> "$GITHUB_STEP_SUMMARY"
