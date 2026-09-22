@@ -98,7 +98,7 @@ function buildAyudaCard() {
         .setHeader('¿Cómo modifico un envío ya guardado?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Dos caminos:\n\n<b>1.</b> Abre el correo del caso, presiona <b>Detectar caso</b>, y si el caso ya existe elige <b>✏️ Editar existente</b> en la card "Caso ya registrado".\n\n<b>2.</b> Ir al menú principal y entrar a <b>✏️ Editor de solicitudes</b>. Ahí aparecen todos los envíos de los últimos 30 días en estado <b>PENDIENTE</b>, <b>NO APROBADO</b> o <b>APROBADO</b>. Presiona <b>Editar</b> en el que quieras modificar.\n\nLa edición sobrescribe la fila existente en el Sheet, no crea una nueva. Puedes cambiar servicio, ambiente, estado, observaciones, correo, repositorio, Sonar y artefactos. Los archivos de Drive ya copiados quedan intactos.\n\n<i>La cantidad de componentes queda fija: si un envío tiene 2 filas (una por cada componente), quedan 2 filas después de editar.</i>')
+            .setText('Dos caminos:\n\n<b>1.</b> Abre el correo del caso, presiona <b>Detectar caso</b>, y si el caso ya existe con un envío en <b>PENDIENTE</b> elige <b>✏️ Editar existente</b> en la card "Caso ya registrado". Si el caso ya está en APROBADO o NO APROBADO, la card avisa pero no ofrece editar (para eso hay que cambiar el estado directo en el Sheet).\n\n<b>2.</b> Ir al menú principal y entrar a <b>✏️ Editor de solicitudes</b>. Ahí aparecen los envíos en estado <b>PENDIENTE</b> de los últimos 30 días. Presiona <b>Editar</b> en el que quieras modificar.\n\nLa edición sobrescribe la fila existente en el Sheet, no crea una nueva. Puedes cambiar servicio, ambiente, estado, observaciones, correo, repositorio, Sonar y artefactos. Los archivos de Drive ya copiados quedan intactos.\n\n<i>Nota: al pasar el estado a APROBADO se borran automáticamente las observaciones (el comentario típicamente ya no aplica una vez aprobado). Si pasas a NO APROBADO el comentario se conserva.</i>\n\n<i>La cantidad de componentes queda fija: si un envío tiene 2 filas (una por cada componente), quedan 2 filas después de editar.</i>')
         )
     )
     .addSection(
@@ -106,7 +106,7 @@ function buildAyudaCard() {
         .setHeader('¿Qué envíos NO aparecen en el Editor de solicitudes?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('El editor solo muestra filas que cumplen tres condiciones:\n\n• Tienen <b>ID de envío</b> en la columna M (oculta): solo las filas creadas por el add-on.\n• Estado <b>PENDIENTE</b>, <b>NO APROBADO</b> o <b>APROBADO</b>.\n• Fecha del envío dentro de los últimos 30 días.\n\nLas filas escritas a mano sin ID de envío no aparecen aquí (aunque sí las lista la card "Caso ya registrado" como aviso al detectar). Puedes modificarlas directamente en el Sheet.')
+            .setText('El editor solo muestra filas que cumplen tres condiciones:\n\n• Tienen <b>ID de envío</b> en la columna M (oculta): solo las filas creadas por el add-on.\n• Estado <b>PENDIENTE</b>. Los envíos APROBADOS o NO APROBADOS no aparecen porque se consideran cerrados.\n• Fecha del envío dentro de los últimos 30 días.\n\nLas filas escritas a mano sin ID de envío no aparecen aquí (aunque sí las lista la card "Caso ya registrado" como aviso al detectar). Puedes modificarlas directamente en el Sheet.')
         )
     )
 

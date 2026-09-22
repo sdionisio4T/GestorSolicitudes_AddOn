@@ -12,7 +12,7 @@ Google Workspace Add-on (Gmail + Sheets) que automatiza el registro de solicitud
 - **Escritura en Sheet** de una fila por componente, con manejo de bloqueo para envíos concurrentes.
 - **Copia de archivos en Drive** con estructura de carpetas por servicio, caso y APIM, con reintentos automáticos en segundo plano si algo falla.
 - **Panel de envíos** para consultar el estado de solicitudes en curso (desde Gmail o Sheets).
-- **Editor de solicitudes** para modificar envíos ya guardados sin duplicar filas ni re-copiar archivos. Incluye estados PENDIENTE, NO APROBADO y APROBADO de los últimos 30 días.
+- **Editor de solicitudes** para modificar envíos ya guardados sin duplicar filas ni re-copiar archivos. Incluye solo envíos en estado PENDIENTE de los últimos 30 días. Los APROBADOS o NO APROBADOS se consideran cerrados y no aparecen en el listado (pero sí siguen apareciendo como aviso en la card "Caso ya registrado" al detectar un correo, para evitar duplicados). Al pasar el estado a APROBADO se borran las observaciones automáticamente.
 
 ## Estructura del proyecto
 

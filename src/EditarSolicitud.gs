@@ -6,14 +6,15 @@
  *
  * Entradas:
  *   - Homepage → "Editor de solicitudes" → lista de envíos con Estado
- *     PENDIENTE o NO APROBADO de los últimos EDITABLES_CONFIG.DIAS_ATRAS
- *     días (por fecha del envío, col J).
+ *     PENDIENTE de los últimos EDITABLES_CONFIG.DIAS_ATRAS días (por
+ *     fecha del envío, col J). Los envíos APROBADOS o NO APROBADOS no
+ *     aparecen en el listado ni son editables desde el add-on.
  *   - EstadoCard → botón "Editar solicitud" cuando no hay copia en curso.
  */
 
 var EDITABLES_CONFIG = {
   DIAS_ATRAS: 30,
-  ESTADOS_EDITABLES: ['PENDIENTE', 'NO APROBADO', 'APROBADO']
+  ESTADOS_EDITABLES: ['PENDIENTE']
 };
 
 // ── Parseo del contenido de la celda Estado (col H) ─────────────────────
@@ -108,7 +109,7 @@ function listarSolicitudesEditables() {
 }
 
 /**
- * Devuelve los envíos editables (PENDIENTE / NO APROBADO, últimos
+ * Devuelve los envíos editables (PENDIENTE, últimos
  * EDITABLES_CONFIG.DIAS_ATRAS días) cuyo numeroCaso coincide con el
  * pasado. Se usa desde onGmailMessageOpen para saber si el caso del
  * correo ya tiene solicitudes editables y ofrecer editar en lugar de
@@ -119,6 +120,73 @@ function listarEditablesPorCaso(numeroCaso) {
   return listarSolicitudesEditables().filter(function(item) {
     return String(item.numeroCaso) === String(numeroCaso);
   });
+}
+
+/**
+ * Devuelve TODOS los envíos con envioId del caso dado, sin filtro por
+ * fecha ni por estado. Se usa desde el chooser "Caso ya registrado"
+ * para mostrar el resumen de envíos previos aunque estén APROBADOS o
+ * NO APROBADOS (no editables), y evitar así que el usuario duplique
+ * la fila sin darse cuenta. El botón "Editar existente" del chooser
+ * sigue apareciendo solo si hay envíos editables (PENDIENTE),
+ * separados por listarEditablesPorCaso.
+ */
+function listarTodosEnviosPorCaso(numeroCaso) {
+  if (!numeroCaso) return [];
+  try {
+    var sheet = obtenerSheet();
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return [];
+
+    var datos = sheet.getRange(2, 1, lastRow - 1, SHEET_COLS.ID_ENVIO).getValues();
+    var casoBuscado = String(numeroCaso);
+    var porEnvio = {};
+
+    for (var i = 0; i < datos.length; i++) {
+      var fila = datos[i];
+      var envioId = fila[SHEET_COLS.ID_ENVIO - 1];
+      if (!envioId) continue;
+      if (String(fila[SHEET_COLS.NUMERO_CASO - 1] || '') !== casoBuscado) continue;
+
+      var estadoParsed = parsearEstadoCelda(fila[SHEET_COLS.ESTADO - 1]);
+      var fecha = parsearFechaCelda(fila[SHEET_COLS.FECHA - 1]);
+      var key = String(envioId);
+
+      if (!porEnvio[key]) {
+        porEnvio[key] = {
+          envioId: envioId,
+          numeroCaso: String(fila[SHEET_COLS.NUMERO_CASO - 1] || ''),
+          servicio: String(fila[SHEET_COLS.SERVICIO - 1] || ''),
+          fecha: fecha,
+          estado: estadoParsed.estado,
+          ambiente: String(fila[SHEET_COLS.AMBIENTE - 1] || ''),
+          componentes: []
+        };
+      }
+      var comp = String(fila[SHEET_COLS.COMPONENTE - 1] || '');
+      if (comp && porEnvio[key].componentes.indexOf(comp) === -1) {
+        porEnvio[key].componentes.push(comp);
+      }
+    }
+
+    var lista = [];
+    for (var k in porEnvio) {
+      if (porEnvio.hasOwnProperty(k)) lista.push(porEnvio[k]);
+    }
+    // Orden: primero PENDIENTE, después el resto; dentro de cada grupo por fecha desc.
+    lista.sort(function(a, b) {
+      var aPend = a.estado === 'PENDIENTE' ? 0 : 1;
+      var bPend = b.estado === 'PENDIENTE' ? 0 : 1;
+      if (aPend !== bPend) return aPend - bPend;
+      var aTs = a.fecha ? a.fecha.getTime() : 0;
+      var bTs = b.fecha ? b.fecha.getTime() : 0;
+      return bTs - aTs;
+    });
+    return lista;
+  } catch (err) {
+    console.error('[Editar] listarTodosEnviosPorCaso: ' + err.message);
+    return [];
+  }
 }
 
 /**
@@ -714,6 +782,14 @@ function onGuardarEdicion(e) {
       .build();
   }
 
+  var estadoNuevo = leerInput(formInputs, 'estado') || CONFIG.ESTADO_DEFECTO;
+  var observacionesRaw = leerInput(formInputs, 'observaciones');
+  // Al pasar a APROBADO se descarta lo que hubiera en observaciones: el
+  // comentario típicamente explicaba por qué estaba pendiente y ya no
+  // aplica una vez aprobado. NO APROBADO conserva las observaciones
+  // porque suelen justificar el rechazo.
+  var observacionesFinales = (estadoNuevo === 'APROBADO') ? '' : observacionesRaw;
+
   var datosEditados = {
     numeroCaso: numeroCaso,
     servicio: servicio,
@@ -721,8 +797,8 @@ function onGuardarEdicion(e) {
     sonar: sonar,
     artefactos: leerInput(formInputs, 'artefactos'),
     ambiente: leerInput(formInputs, 'ambiente'),
-    estado: leerInput(formInputs, 'estado') || CONFIG.ESTADO_DEFECTO,
-    observaciones: leerInput(formInputs, 'observaciones'),
+    estado: estadoNuevo,
+    observaciones: observacionesFinales,
     correoSolicitante: correo
   };
 

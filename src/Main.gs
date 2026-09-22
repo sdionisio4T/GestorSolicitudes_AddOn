@@ -342,12 +342,19 @@ function construirValidacionDesdeDatos_(datos, messageId) {
  * caso ya tiene envíos previos en el Sheet (con envioId o filas
  * manuales), muestra la chooser "Nuevo envío / Editar existente";
  * si no, el formulario de creación.
+ *
+ * Se pasan dos listados al chooser: `todosEnviosCaso` (todos los
+ * envíos previos del caso, para el resumen visual) y `editablesCaso`
+ * (solo los que están en PENDIENTE, para decidir si se ofrece el
+ * botón "Editar existente"). Los envíos APROBADOS o NO APROBADOS
+ * aparecen en el aviso pero no como editables.
  */
 function cardDetectada_(datos, messageId) {
+  var todosEnviosCaso = listarTodosEnviosPorCaso(datos.numeroCaso);
   var editablesCaso = listarEditablesPorCaso(datos.numeroCaso);
   var manuales = listarFilasManualesPorCaso(datos.numeroCaso);
-  if (editablesCaso.length > 0 || manuales.length > 0) {
-    return buildElegirAccionCasoCard(datos, messageId, editablesCaso, manuales);
+  if (todosEnviosCaso.length > 0 || manuales.length > 0) {
+    return buildElegirAccionCasoCard(datos, messageId, editablesCaso, manuales, todosEnviosCaso);
   }
   return construirValidacionDesdeDatos_(datos, messageId);
 }
@@ -513,9 +520,12 @@ function onDetectarCaso(e) {
  *   - Filas manuales (sin envioId) → se listan como aviso; no se pueden
  *     editar desde el add-on porque les falta el envioId de referencia.
  */
-function buildElegirAccionCasoCard(datos, messageId, editablesCaso, manuales) {
+function buildElegirAccionCasoCard(datos, messageId, editablesCaso, manuales, todosEnviosCaso) {
   editablesCaso = editablesCaso || [];
   manuales = manuales || [];
+  // Compatibilidad: si el llamador no pasó `todosEnviosCaso` caemos a
+  // `editablesCaso` para no romper firmas antiguas.
+  todosEnviosCaso = todosEnviosCaso || editablesCaso;
 
   var card = CardService.newCardBuilder()
     .setHeader(
@@ -524,24 +534,34 @@ function buildElegirAccionCasoCard(datos, messageId, editablesCaso, manuales) {
         .setSubtitle('Caso ' + (datos.numeroCaso || '(sin caso)') + ' · ' + (datos.servicioDesplegar || '(sin servicio)'))
     );
 
-  // ── Envíos con envioId (editables desde el add-on) ──
-  if (editablesCaso.length > 0) {
-    var resumen = editablesCaso.map(function(item) {
+  // ── Envíos con envioId (todos los del caso, editables o no) ──
+  if (todosEnviosCaso.length > 0) {
+    var resumen = todosEnviosCaso.map(function(item) {
       var comp = (item.componentes || []).join(', ') || '(sin componente)';
+      var editableMarca = (item.estado === 'PENDIENTE') ? '' : ' <i>(no editable)</i>';
       return '• <b>' + escaparHtml(item.estado) + '</b> · ' + escaparHtml(item.ambiente || '(sin ambiente)') +
-             ' · ' + escaparHtml(comp);
+             ' · ' + escaparHtml(comp) + editableMarca;
     }).join('<br>');
+    var pendientesCount = editablesCaso.length;
+    var totalCount = todosEnviosCaso.length;
+    var textoIntro;
+    if (pendientesCount === 0) {
+      textoIntro = 'Este caso ya tiene <b>' + totalCount + ' envío' +
+        (totalCount === 1 ? '' : 's') + '</b> registrado' +
+        (totalCount === 1 ? '' : 's') + ' desde el add-on. Ninguno está en PENDIENTE, así que no se pueden editar (solo registrar otro nuevo):';
+    } else if (pendientesCount === totalCount) {
+      textoIntro = 'Este caso ya tiene <b>' + totalCount + ' envío' +
+        (totalCount === 1 ? '' : 's') + '</b> registrado' +
+        (totalCount === 1 ? '' : 's') + ' desde el add-on:';
+    } else {
+      textoIntro = 'Este caso ya tiene <b>' + totalCount + ' envío' +
+        (totalCount === 1 ? '' : 's') + '</b> registrado' +
+        (totalCount === 1 ? '' : 's') + ' desde el add-on (' + pendientesCount + ' en PENDIENTE, el resto no editable):';
+    }
     card.addSection(
       CardService.newCardSection()
-        .addWidget(
-          CardService.newTextParagraph()
-            .setText('Este caso ya tiene <b>' + editablesCaso.length + ' envío' +
-              (editablesCaso.length === 1 ? '' : 's') + '</b> registrado' +
-              (editablesCaso.length === 1 ? '' : 's') + ' desde el add-on:')
-        )
-        .addWidget(
-          CardService.newTextParagraph().setText(resumen)
-        )
+        .addWidget(CardService.newTextParagraph().setText(textoIntro))
+        .addWidget(CardService.newTextParagraph().setText(resumen))
     );
   }
 
