@@ -2,9 +2,11 @@ name: Deploy a Apps Script
 
 # Cuando corre este workflow
 on:
-  # En cada push a main (merge de PR o push directo)
+  # En cada push a main o desarrollo (merge de PR o push directo)
   push:
-    branches: [main]
+    branches:
+      - main
+      - desarrollo
   # Permite disparar manualmente desde la pestaña Actions de GitHub
   workflow_dispatch:
 

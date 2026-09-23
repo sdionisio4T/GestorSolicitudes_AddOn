@@ -48,9 +48,9 @@ jobs:
       - name: Create Apps Script project
         run: clasp create --title "${{ inputs.title }}" --type standalone
 
-      - name: Set rootDir to src
+      - name: Write complete .clasp.json
         run: |
-          node -e "const fs=require('fs');const p='.clasp.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.rootDir='src';fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          node -e "const fs=require('fs');const p='.clasp.json';const scriptId=JSON.parse(fs.readFileSync(p,'utf8')).scriptId;const j={scriptId,rootDir:'src',scriptExtensions:['.js','.gs'],htmlExtensions:['.html'],jsonExtensions:['.json'],filePushOrder:[],skipSubdirectories:false};fs.writeFileSync(p,JSON.stringify(j,null,2));"
 
       - name: Print scriptId and next steps
         run: |
