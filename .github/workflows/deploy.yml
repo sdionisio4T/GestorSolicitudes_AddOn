@@ -74,14 +74,26 @@ jobs:
       - name: Restore .clasp.json
         run: echo '${{ secrets.CLASP_JSON }}' > .clasp.json
 
-      # 8) Generar src/appsscript.json a partir de la plantilla. El
-      #    manifest real esta en .gitignore para que cada usuario
-      #    tenga el suyo local; el deploy usa la URL del logo por
-      #    defecto que trae la plantilla.
-      - name: Generate manifest from template
-        run: node -e "require('fs').copyFileSync('src/appsscript.template.json','src/appsscript.json')"
+      # 8) Leer el logo que el proyecto ya tiene en Apps Script. El manifest
+      #    real esta en .gitignore, asi que el runner no lo tiene; se baja
+      #    el del proyecto, se guarda aparte y se restaura el codigo del repo
+      #    para no subir versiones viejas. Si la lectura falla, sigue con la
+      #    plantilla.
+      - name: Read current logo from Apps Script
+        run: |
+          clasp pull || echo "::warning::No se pudo leer el proyecto, se usara el logo de la plantilla."
+          if [ -f src/appsscript.json ]; then cp src/appsscript.json "$RUNNER_TEMP/remote-manifest.json"; fi
+          git checkout -- src
+          git clean -fdq src
+          rm -f src/appsscript.json
 
-      # 9) Ejecutar el push. --force acepta automaticamente cambios en el
+      # 9) Generar src/appsscript.json a partir de la plantilla, conservando
+      #    el logo leido en el paso anterior. Sin logo propio, queda el de
+      #    la plantilla.
+      - name: Generate manifest from template
+        run: node scripts/generar-manifest.js "$RUNNER_TEMP/remote-manifest.json"
+
+      # 10) Ejecutar el push. --force acepta automaticamente cambios en el
       #    manifest (appsscript.json) sin pedir confirmacion interactiva.
       - name: Push to Apps Script
         run: clasp push --force

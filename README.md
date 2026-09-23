@@ -45,6 +45,7 @@ Además del código en `src/`, el repositorio contiene:
 |---|---|
 | `src/` | Código fuente del add-on (`.gs` + `appsscript.template.json`). `clasp` toma esta carpeta como raíz de push (ver `rootDir` en `.clasp.json`). |
 | `scripts/setup.js` | Orquestador de `npm run setup`: crea la carpeta del proyecto en Drive del usuario, sube el logo, marca el logo como público, genera `src/appsscript.json` a partir de la plantilla, crea el proyecto Apps Script dentro de la carpeta y sube el código. |
+| `scripts/generar-manifest.js` | Lo usa el workflow de deploy: genera `src/appsscript.json` desde la plantilla conservando el logo que el proyecto ya tiene en Apps Script. |
 | `scripts/finish-login.sh` | Helper para completar `clasp login` desde Codespaces cuando el redirect a `localhost` falla. Se invoca con `npm run login:finish`. Ver sección **Login OAuth desde Codespaces**. |
 | `.devcontainer/devcontainer.json` | Configuración de GitHub Codespaces. Al abrir el repo en Codespaces, se levanta un contenedor con Node 20, deps de npm y ESLint ya instalados, para trabajar sin instalar nada en la PC local. |
 | `docs/` | Documentación interna del mantenedor (contexto del proyecto, roadmap, aviso de privacidad). No se versiona en git ni se sube a Apps Script. |
@@ -363,8 +364,9 @@ Cada push a las ramas `main` o `desarrollo` dispara automáticamente el workflow
 3. Corre ESLint (`npm run lint`). Si aparecen errores, el workflow se aborta.
 4. Instala clasp globalmente.
 5. Restaura las credenciales de clasp y el `.clasp.json` desde los GitHub Secrets del repositorio.
-6. Genera `src/appsscript.json` a partir de `src/appsscript.template.json` (una copia directa, ya que la plantilla trae la URL de logo de fallback que el deploy usa por defecto).
-7. Ejecuta `clasp push --force` contra el proyecto Apps Script destino.
+6. Lee el logo que el proyecto ya tiene en Apps Script (`clasp pull`) y restaura el código del repo.
+7. Genera `src/appsscript.json` a partir de `src/appsscript.template.json` con `scripts/generar-manifest.js`, conservando el logo leído en el paso anterior. Si el proyecto no tiene logo propio o la lectura falla, queda el logo de fallback de la plantilla.
+8. Ejecuta `clasp push --force` contra el proyecto Apps Script destino.
 
 Si cualquiera de los pasos falla, el workflow queda en rojo y Apps Script conserva la versión anterior. Los cambios llegan al editor web únicamente cuando el workflow termina en verde.
 
