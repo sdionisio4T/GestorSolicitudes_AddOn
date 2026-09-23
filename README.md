@@ -121,7 +121,7 @@ Reglas:
 
 ## Uso en tu propia cuenta
 
-Si clonaste (o forkeaste) este repositorio y quieres instalar el add-on en tu propia cuenta de Google, hay dos rutas. La **Ruta A** es la recomendada para la mayoría de usuarios. La **Ruta C** es opcional y solo aplica si además quieres que cada `git push` a tu fork suba los cambios a tu Apps Script automáticamente.
+Si clonaste (o forkeaste) este repositorio y quieres instalar el add-on en tu propia cuenta de Google, hay dos rutas. La **Ruta A** es la recomendada para la mayoría de usuarios. La **Ruta B** es opcional y solo aplica si además quieres que cada `git push` a tu fork suba los cambios a tu Apps Script automáticamente.
 
 ### Requisitos comunes a ambas rutas
 
@@ -151,7 +151,7 @@ No hace falta instalar `clasp` a mano: se declara como dependencia de desarrollo
 
 **¿Y si no quieres o no puedes instalar Node?** Este flujo con `clasp` está pensado para colaboradores que van a modificar el código. Si solo quieres **usar** el add-on sin tocarlo, no necesitas Node ni clonar el repo: pídele al mantenedor del proyecto que te comparta acceso como tester al proyecto Apps Script existente (ver sección **Distribución** más abajo). Con ese acceso puedes instalar el add-on en tu cuenta directamente desde el editor web, sin línea de comandos.
 
-**Alternativa sin instalar nada local: GitHub Codespaces.** El repo trae `.devcontainer/devcontainer.json` configurado para levantar un contenedor con Node 20, deps de npm y ESLint ya instalados. Basta con abrir el repo en GitHub, botón verde **Code → Codespaces → Create codespace**. Tras uno o dos minutos tenés un VS Code en el navegador con todo listo para correr `npm run setup` sin instalar nada en tu PC. Detalle: si es la primera vez que hacés `clasp login` desde el Codespace, el flujo OAuth no puede completarse solo (el `localhost` del contenedor no es alcanzable desde tu navegador). Ver más abajo la sección **Login OAuth desde Codespaces** para el workaround.
+**Alternativa sin instalar nada local: GitHub Codespaces.** El repo trae `.devcontainer/devcontainer.json` configurado para levantar un contenedor con Node 20, deps de npm y ESLint ya instalados. Basta con abrir el repo en GitHub, botón verde **Code → Codespaces → Create codespace**. Tras uno o dos minutos tienes un VS Code en el navegador con todo listo para correr `npm run setup` sin instalar nada en tu PC. Detalle: si es la primera vez que haces `clasp login` desde el Codespace, el flujo OAuth no puede completarse solo (el `localhost` del contenedor no es alcanzable desde tu navegador). Ver más abajo la sección **Login OAuth desde Codespaces** para el workaround.
 
 ### Ruta A: instalación básica (una sola vez, todo local)
 
@@ -202,58 +202,59 @@ npm run pull
 **Notas:**
 
 - El setup es idempotente: se puede correr varias veces sin duplicar nada. La segunda corrida detecta que la carpeta y el logo ya están, y salta el `clasp create` si `.clasp.json` existe.
-- Si querés arrancar completamente desde cero (por ejemplo para forzar un proyecto nuevo o probar el flujo entero), borrá `.clasp.json` y `src/appsscript.json` antes de correr `npm run setup`. Si además querés que el logo se re-suba a una carpeta nueva, borrá también la carpeta "Gestor de Solicitudes" desde tu Drive.
+- Si quieres arrancar completamente desde cero (por ejemplo para forzar un proyecto nuevo o probar el flujo entero), borra `.clasp.json` y `src/appsscript.json` antes de correr `npm run setup`. Si además quieres que el logo se re-suba a una carpeta nueva, borra también la carpeta "Gestor de Solicitudes" desde tu Drive.
 - El archivo `src/appsscript.json` que genera el setup **no está en git** (`.gitignore` lo excluye). Cada usuario tiene el suyo local, con su URL de logo personal. No hace falta cuidarse de commitearlo por accidente: git simplemente lo ignora.
 - La configuración por usuario (`SHEET_ID`, `SHEET_TAB`, `CARPETA_RAIZ_ID`) se define desde el propio add-on la primera vez que lo abres, no desde el repositorio. Ver sección **Configuración por usuario**.
 
 ### Login OAuth desde Codespaces (workaround)
 
-Si trabajás desde GitHub Codespaces y es la primera vez que hacés `clasp login`, el flujo estándar no puede completarse solo. Google redirige el callback OAuth a `http://localhost:<PUERTO>/?code=...` y ese `localhost` es el del contenedor Codespaces, no el de tu navegador. Por eso el navegador muestra `ERR_CONNECTION_REFUSED` al final.
+Si trabajas desde GitHub Codespaces y es la primera vez que haces `clasp login`, el flujo estándar no puede completarse solo. Google redirige el callback OAuth a `http://localhost:<PUERTO>/?code=...` y ese `localhost` es el del contenedor Codespaces, no el de tu navegador. Por eso el navegador muestra `ERR_CONNECTION_REFUSED` al final.
 
 Workaround en dos terminales dentro del Codespace:
 
-1. En la **terminal 1**, corré `npx clasp login`. El comando queda esperando el callback.
-2. Copiá la URL de Google que imprime, abrila en tu navegador Windows y autorizá con tu cuenta Google.
-3. Al fallar el redirect a `localhost`, copiá la URL completa de la barra del navegador (la que empieza con `http://localhost:<PUERTO>/?code=...`).
-4. En la **terminal 2** del mismo Codespace, corré:
+1. En la **terminal 1**, corre `npx clasp login`. El comando queda esperando el callback.
+2. Copia la URL de Google que imprime, ábrela en tu navegador Windows y autoriza con tu cuenta Google.
+3. Al fallar el redirect a `localhost`, copia la URL completa de la barra del navegador (la que empieza con `http://localhost:<PUERTO>/?code=...`).
+4. En la **terminal 2** del mismo Codespace, corre:
 
    ```bash
    npm run login:finish
    ```
 
-   Pegá la URL cuando te la pida y presioná Enter. Ese script hace el `curl` local que le entrega el `code` al servidor de clasp que sigue corriendo en la terminal 1.
-5. Volvé a la terminal 1: clasp imprime "Success!" y crea `~/.clasprc.json` con las credenciales.
+   Pega la URL cuando te la pida y presiona Enter. Ese script hace el `curl` local que le entrega el `code` al servidor de clasp que sigue corriendo en la terminal 1.
+5. Vuelve a la terminal 1: clasp imprime "Success!" y crea `~/.clasprc.json` con las credenciales.
 
-Después de esto ya podés correr `npm run setup` normalmente. El token dura varios meses; solo hay que repetir este paso si expira o si borrás el Codespace.
+Después de esto ya puedes correr `npm run setup` normalmente. El token dura varios meses; solo hay que repetir este paso si expira o si borras el Codespace.
 
-### Ruta C: deploy automático desde tu fork (opcional)
+### Ruta B: deploy automático desde tu fork (opcional)
 
 Con esta ruta, además de tener el add-on instalado localmente, configuras GitHub Actions en tu fork para que cada push a `main` suba automáticamente el código a tu Apps Script. Requiere haber completado antes la Ruta A.
 
 **Pasos:**
 
 1. Haz fork de este repositorio en tu cuenta de GitHub.
-2. Clónalo local y ejecuta la Ruta A completa. Al final tendrás dos archivos con credenciales:
-   - `~/.clasprc.json` (token OAuth de tu cuenta Google).
-   - `.clasp.json` (con el `scriptId` de tu proyecto Apps Script).
+2. Clónalo local y ejecuta la Ruta A completa. Al final tendrás dos archivos con credenciales, guardados en lugares distintos:
+   - `.clasp.json` (con el `scriptId` de tu proyecto Apps Script): se crea **dentro de la carpeta del repo**.
+   - `.clasprc.json` (token OAuth de tu cuenta Google): lo crea `clasp login` **en la carpeta personal de tu usuario del PC**, no en el repo. En Windows es `C:\Users\TuUsuario\.clasprc.json`; en macOS, Linux y Codespaces es `~/.clasprc.json`.
 3. En tu fork, ve a **Settings → Secrets and variables → Actions → New repository secret** y crea los dos secrets:
 
    | Nombre del secret | Contenido |
    |---|---|
-   | `CLASPRC_JSON` | Contenido completo del archivo `~/.clasprc.json` (en Windows: `C:\Users\TuUsuario\.clasprc.json`). |
+   | `CLASPRC_JSON` | Contenido completo del archivo `.clasprc.json` de tu carpeta de usuario. |
    | `CLASP_JSON` | Contenido completo del archivo `.clasp.json` que quedó en la raíz del repo. |
 
-   **Cómo copiar el contenido en Windows (PowerShell):**
+   Los comandos para copiar el contenido dependen de la terminal que uses. Elige la tuya:
 
-   Primero, verifica que los dos archivos existan. El `-Force` es necesario para `.clasprc.json` porque empieza con punto y por defecto PowerShell no muestra archivos ocultos:
+   **PowerShell (Windows):**
+
+   Primero verifica que los dos archivos existan (ambos deben responder `True`). Ejecuta esto desde la carpeta del repo:
 
    ```powershell
-   cd "C:\ruta\a\Gestor de Solicitudes"
    Test-Path $env:USERPROFILE\.clasprc.json
    Test-Path .clasp.json
    ```
 
-   Si ambos comandos responden `True`, cópialos al portapapeles uno a uno y pégalos en GitHub con **Ctrl+V**:
+   Luego copia cada archivo al portapapeles y pégalo en GitHub con **Ctrl+V**:
 
    ```powershell
    Get-Content $env:USERPROFILE\.clasprc.json | Set-Clipboard
@@ -263,9 +264,21 @@ Con esta ruta, además de tener el add-on instalado localmente, configuras GitHu
    # Pegar en el secret CLASP_JSON con Ctrl+V, luego "Add secret"
    ```
 
-   **Cómo copiar el contenido en macOS o Linux:**
+   **Git Bash (Windows), macOS o Linux:**
+
+   En Git Bash, `~` equivale a `C:\Users\TuUsuario`. Verifica que los dos archivos existan, desde la carpeta del repo:
 
    ```bash
+   ls -a ~/.clasprc.json .clasp.json
+   ```
+
+   Luego copia cada uno al portapapeles y pégalo en GitHub con **Ctrl+V** (o **Cmd+V** en macOS):
+
+   ```bash
+   # Git Bash (Windows)
+   cat ~/.clasprc.json | clip
+   cat .clasp.json | clip
+
    # macOS
    cat ~/.clasprc.json | pbcopy
    cat .clasp.json | pbcopy
@@ -275,15 +288,17 @@ Con esta ruta, además de tener el add-on instalado localmente, configuras GitHu
    cat .clasp.json | xclip -selection clipboard
    ```
 
-   **Cómo copiar el contenido desde GitHub Codespaces:**
+   Corre el par de comandos de tu sistema (primero `.clasprc.json`, pega en `CLASPRC_JSON`; luego `.clasp.json`, pega en `CLASP_JSON`).
 
-   El terminal del Codespace no tiene acceso al portapapeles de tu PC. La forma limpia es abrir cada archivo en el editor y copiar desde ahí:
+   **GitHub Codespaces:**
+
+   La terminal del Codespace no tiene acceso al portapapeles de tu PC. La forma limpia es abrir cada archivo en el editor y copiar desde ahí:
 
    ```bash
    code ~/.clasprc.json
    ```
 
-   Se abre en una pestaña de VS Code (en el navegador del Codespace). Haz clic dentro del editor, **Ctrl+A** (seleccionar todo), **Ctrl+C** (copiar). Vas a la pantalla del secret `CLASPRC_JSON` en GitHub y **Ctrl+V** para pegar.
+   Se abre en una pestaña de VS Code (en el navegador del Codespace). Haz clic dentro del editor, **Ctrl+A** (seleccionar todo), **Ctrl+C** (copiar). Ve a la pantalla del secret `CLASPRC_JSON` en GitHub y **Ctrl+V** para pegar.
 
    Repite con el `.clasp.json`:
 
