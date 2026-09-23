@@ -6,6 +6,7 @@ const os = require('os');
 const CLASPRC_PATH = path.join(os.homedir(), '.clasprc.json');
 const CLASP_PATH = '.clasp.json';
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
+const FOLDER_NAME = 'Gestor de Solicitudes';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function main() {
@@ -22,10 +23,10 @@ async function main() {
   }
 
   const token = await getAccessToken();
-  await compartir(token, scriptId, email);
+  const alcance = await compartir(token, scriptId, email);
 
   const editorUrl = `https://script.google.com/d/${scriptId}/edit`;
-  reportar(email, editorUrl);
+  reportar(email, editorUrl, alcance);
 }
 
 async function getAccessToken() {
@@ -56,9 +57,9 @@ async function getAccessToken() {
   return (await res.json()).access_token;
 }
 
-async function compartir(token, scriptId, email) {
-  const url = `${DRIVE_API}/files/${scriptId}/permissions?sendNotificationEmail=true&supportsAllDrives=true`;
-  const res = await fetch(url, {
+function crearPermiso(token, fileId, email) {
+  const url = `${DRIVE_API}/files/${fileId}/permissions?sendNotificationEmail=true&supportsAllDrives=true`;
+  return fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -66,16 +67,48 @@ async function compartir(token, scriptId, email) {
     },
     body: JSON.stringify({ role: 'writer', type: 'user', emailAddress: email }),
   });
-  if (!res.ok) {
-    throw new Error(`Google rechazo compartir con ese correo (${res.status}): ${await res.text()}`);
-  }
 }
 
-function reportar(email, editorUrl) {
+async function buscarCarpeta(token) {
+  const q = `name = '${FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const res = await fetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.files && data.files.length > 0 ? data.files[0].id : null;
+}
+
+async function compartir(token, scriptId, email) {
+  const directo = await crearPermiso(token, scriptId, email);
+  if (directo.ok) return 'proyecto';
+
+  const detalle = await directo.text();
+  if (!detalle.includes('appNotAuthorizedToFile')) {
+    throw new Error(`Google rechazo compartir con ese correo (${directo.status}): ${detalle}`);
+  }
+
+  const carpetaId = await buscarCarpeta(token);
+  if (!carpetaId) {
+    throw new Error(
+      `El token no tiene permiso sobre el archivo del proyecto y no encontre la carpeta "${FOLDER_NAME}" creada por npm run setup. Vuelve a correr npm run setup o mueve el proyecto a esa carpeta.`
+    );
+  }
+  const porCarpeta = await crearPermiso(token, carpetaId, email);
+  if (!porCarpeta.ok) {
+    throw new Error(`Google rechazo compartir la carpeta (${porCarpeta.status}): ${await porCarpeta.text()}`);
+  }
+  return 'carpeta';
+}
+
+function reportar(email, editorUrl, alcance) {
+  const donde = alcance === 'carpeta'
+    ? `la carpeta "${FOLDER_NAME}" (el proyecto hereda el acceso)`
+    : 'el proyecto';
   const lines = [
     '## Proyecto compartido',
     '',
-    `Se dio acceso de **Editor** a \`${email}\`.`,
+    `Se dio acceso de **Editor** a \`${email}\` sobre ${donde}.`,
     '',
     `**Link del proyecto:** ${editorUrl}`,
     '',
