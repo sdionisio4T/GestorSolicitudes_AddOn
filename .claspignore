@@ -7,3 +7,7 @@
 *.bak.*
 *.tmp
 *.swp
+
+# Plantilla del manifest, solo se usa en local. El manifest real que
+# sube a Apps Script es src/appsscript.json, generado por setup.
+appsscript.template.json

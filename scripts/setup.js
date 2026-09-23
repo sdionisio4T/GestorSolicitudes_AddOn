@@ -6,11 +6,13 @@ const { execSync } = require('child_process');
 
 const CLASPRC_PATH = path.join(os.homedir(), '.clasprc.json');
 const CLASP_PATH = '.clasp.json';
+const TEMPLATE_PATH = 'src/appsscript.template.json';
 const MANIFEST_PATH = 'src/appsscript.json';
 const LOGO_LOCAL_PATH = 'assets/icon_96x96.png';
 const FOLDER_NAME = 'Gestor de Solicitudes';
 const LOGO_NAME = 'icon_96x96.png';
 const PROJECT_TITLE = 'Gestor de Solicitudes';
+const FALLBACK_LOGO_URL = 'https://www.gstatic.com/images/branding/product/1x/gmail_2020q4_48dp.png';
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 
@@ -20,11 +22,18 @@ async function main() {
   const folderId = await ensureFolder(token);
   console.log(`Carpeta lista en Drive: ${folderId}`);
 
-  const logoUrl = await ensureLogo(token, folderId);
-  console.log(`Logo publico: ${logoUrl}`);
+  let logoUrl;
+  try {
+    logoUrl = await ensureLogo(token, folderId);
+    console.log(`Logo publico: ${logoUrl}`);
+  } catch (e) {
+    console.warn(`Fallo la subida del logo: ${e.message}`);
+    console.warn(`Usando logo por defecto: ${FALLBACK_LOGO_URL}`);
+    logoUrl = FALLBACK_LOGO_URL;
+  }
 
-  updateManifest(logoUrl);
-  console.log('src/appsscript.json actualizado con la URL del logo.');
+  renderManifest(logoUrl);
+  console.log('src/appsscript.json generado desde la plantilla.');
 
   ensureProject(folderId);
   finalizeClaspJson();
@@ -34,8 +43,6 @@ async function main() {
 
   console.log('');
   console.log('Setup completo.');
-  console.log('Nota: src/appsscript.json fue modificado con la URL de tu logo.');
-  console.log('No lo commitees si no queres cambiar la URL para el resto del equipo.');
 }
 
 function ensureLogin() {
@@ -152,12 +159,12 @@ async function ensureLogo(token, folderId) {
   return `https://lh3.googleusercontent.com/d/${fileId}`;
 }
 
-function updateManifest(logoUrl) {
-  const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
-  if (manifest.addOns && manifest.addOns.common) {
-    manifest.addOns.common.logoUrl = logoUrl;
+function renderManifest(logoUrl) {
+  const template = JSON.parse(fs.readFileSync(TEMPLATE_PATH, 'utf8'));
+  if (template.addOns && template.addOns.common) {
+    template.addOns.common.logoUrl = logoUrl;
   }
-  fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n');
+  fs.writeFileSync(MANIFEST_PATH, JSON.stringify(template, null, 2) + '\n');
 }
 
 function ensureProject(folderId) {

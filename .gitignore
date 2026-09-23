@@ -17,6 +17,10 @@ Thumbs.db
 # clasp, el scriptId es especifico de tu cuenta corporativa
 .clasp.json
 
+# Manifest generado por scripts/setup.js a partir de appsscript.template.json.
+# Contiene la URL del logo especifica de la cuenta que corrio setup.
+src/appsscript.json
+
 
 # Dependencias de npm (ESLint). El codigo del add-on no corre en Node,
 # package.json y node_modules existen solo para lintar en local.

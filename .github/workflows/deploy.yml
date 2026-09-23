@@ -74,7 +74,14 @@ jobs:
       - name: Restore .clasp.json
         run: echo '${{ secrets.CLASP_JSON }}' > .clasp.json
 
-      # 8) Ejecutar el push. --force acepta automaticamente cambios en el
+      # 8) Generar src/appsscript.json a partir de la plantilla. El
+      #    manifest real esta en .gitignore para que cada usuario
+      #    tenga el suyo local; el deploy usa la URL del logo por
+      #    defecto que trae la plantilla.
+      - name: Generate manifest from template
+        run: node -e "require('fs').copyFileSync('src/appsscript.template.json','src/appsscript.json')"
+
+      # 9) Ejecutar el push. --force acepta automaticamente cambios en el
       #    manifest (appsscript.json) sin pedir confirmacion interactiva.
       - name: Push to Apps Script
         run: clasp push --force
