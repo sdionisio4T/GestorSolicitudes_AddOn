@@ -41,8 +41,20 @@ async function main() {
 
   execSync('clasp push --force', { stdio: 'inherit' });
 
+  const scriptId = JSON.parse(fs.readFileSync(CLASP_PATH, 'utf8')).scriptId;
+  const editorUrl = `https://script.google.com/d/${scriptId}/edit`;
+
   console.log('');
+  console.log('========================================================');
   console.log('Setup completo.');
+  console.log('');
+  console.log('PROXIMO PASO (manual, una sola vez):');
+  console.log('');
+  console.log(`  1. Abri: ${editorUrl}`);
+  console.log('  2. En la barra superior: Deploy > Test deployments');
+  console.log('  3. Boton "Install", luego "Done".');
+  console.log('  4. Refresca Gmail. El add-on aparece en el panel derecho.');
+  console.log('========================================================');
 }
 
 function ensureLogin() {
