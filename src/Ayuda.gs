@@ -1,5 +1,5 @@
 /**
- * Ayuda.gs: contenido de la card de ayuda del add-on (FAQ larga).
+ * Ayuda.gs Q: contenido de la card de ayuda del add-on (FAQ larga).
  * Vive aparte de Cards.gs porque su ciclo de vida es distinto: se toca
  * cuando cambia la documentación, no cuando cambia el flujo de la app.
  * Los handlers que la muestran (onMostrarAyuda / onAbrirAyuda) están en

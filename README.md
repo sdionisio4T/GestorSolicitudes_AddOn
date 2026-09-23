@@ -85,7 +85,6 @@ Aun así, los correos corporativos identifican indirectamente a un colaborador y
 
 Para depuración local sobre datos ficticios se puede poner `LOG_REDACT_PII = false` temporalmente. **No dejarlo en false en producción.**
 
-El aviso de privacidad completo para el usuario (identidad del responsable, finalidades, derechos, canal para ejercerlos según el artículo 14 del Decreto 1377 de 2013) se mantiene aparte y no forma parte del repositorio versionado.
 
 ## Configuración por usuario
 
@@ -122,7 +121,7 @@ Reglas:
 
 ## Uso en tu propia cuenta
 
-Si clonaste (o forkeaste) este repositorio y quieres instalar el add-on en tu propia cuenta de Google, hay dos rutas. La **Ruta A** es la recomendada para la mayoría de usuarios. La **Ruta B** es opcional y solo aplica si además quieres que cada `git push` a tu fork suba los cambios a tu Apps Script automáticamente.
+Si clonaste (o forkeaste) este repositorio y quieres instalar el add-on en tu propia cuenta de Google, hay dos rutas. La **Ruta A** es la recomendada para la mayoría de usuarios. La **Ruta B** es opcional y solo aplica si además quieres que cada `git push` a tu fork suba los cambios a tu Apps Script automáticamente. Si no puedes usar Node ni `clasp`, existe además una **instalación manual** copiando y pegando el código en el editor web (ver **Instalación manual sin clasp**, al final de esta sección).
 
 ### Requisitos comunes a ambas rutas
 
@@ -315,6 +314,18 @@ Con esta ruta, además de tener el add-on instalado localmente, configuras GitHu
 **Comportamiento en forks sin secrets configurados:** el workflow detecta que faltan los secrets y termina en verde sin intentar el push, mostrando un aviso en el log. Es decir, un fork recién clonado no rompe su pestaña Actions con errores en rojo; simplemente el deploy automático queda desactivado hasta que agregues los secrets.
 
 **Rotación de credenciales:** si el token OAuth de `CLASPRC_JSON` deja de funcionar (Google los revoca eventualmente), corre `clasp login` en local para regenerar el archivo y actualiza el valor del secret con el contenido nuevo. El secret se puede editar sin borrarlo, desde la misma pantalla donde lo creaste.
+
+### Instalación manual sin clasp (alternativa)
+
+Si no puedes o no quieres usar Node ni `clasp`, puedes crear el proyecto directamente en el editor web copiando y pegando el código. Es más lento y cada actualización del repo hay que repetirla a mano, así que solo conviene para pruebas puntuales.
+
+1. Entra a [script.google.com](https://script.google.com) → **Nuevo proyecto** y ponle el nombre "Gestor de Solicitudes".
+2. Crea un archivo de script por cada `.gs` de la carpeta `src/` (botón **+** junto a "Archivos" → **Secuencia de comandos**). El nombre va sin la extensión: por ejemplo `Main`, `Config`, `Cards`. Copia y pega en cada uno el contenido del archivo correspondiente. `Tests.gs` es opcional. El archivo `Código.gs` que trae el proyecto nuevo puedes borrarlo.
+3. Muestra el manifest: **Configuración del proyecto** (engranaje) → activa **"Mostrar el archivo de manifiesto appsscript.json en el editor"**.
+4. Abre `appsscript.json` en el editor y **reemplaza todo su contenido** con el de `src/appsscript.template.json`. Sin este paso el add-on no funciona: el manifest por defecto no trae los scopes OAuth, los triggers de Gmail y Sheets ni la sección `addOns`.
+5. Instala como implementación de prueba: **Implementar → Implementaciones de prueba → Instalar**, y sigue la sección **Distribución** para las advertencias de Google. Recarga Gmail.
+
+**Logo:** la plantilla trae el logo por defecto de Gmail, que funciona sin configurar nada. Si quieres uno propio, sube la imagen a tu Drive, compártela como "cualquiera con el enlace" y cambia el valor de `logoUrl` en `appsscript.json` por `https://lh3.googleusercontent.com/d/<ID del archivo>`. El ID es la parte del enlace de Drive entre `/d/` y `/view`.
 
 ## Desarrollo local
 
