@@ -378,11 +378,7 @@ El add-on se distribuye a los testers como **implementación de prueba**, no com
 
 ### Compartir el proyecto con un tester
 
-**Vía automática (recomendada).** Cualquier colaborador del repositorio puede dar acceso desde GitHub: pestaña **Actions** → **Compartir proyecto con tester** → **Run workflow** → escribir el correo de Google del tester. El workflow (`.github/workflows/compartir-proyecto.yml`) usa la cuenta del secret `CLASPRC_JSON` para darle acceso de **Editor** al proyecto y deja en el resumen de la corrida el link y los pasos siguientes. Solo agrega acceso; para quitarlo hay que hacerlo desde Drive. También se puede correr en local con `node scripts/compartir.js correo@dominio.com` (requiere `.clasp.json` y `~/.clasprc.json`).
-
-Si la organización restringe compartir archivos con dominios externos, el workflow falla con el error que devuelve Google.
-
-**Vía manual.** Desde el editor de Apps Script, ícono de **Compartir** (👤➕ arriba a la derecha) → agregar el correo del tester con acceso de **Editor**. Eso le da permiso para abrir el proyecto y ejecutar la implementación de prueba en su cuenta.
+Desde el editor de Apps Script, ícono de **Compartir** (👤➕ arriba a la derecha) → agregar el correo del tester con acceso de **Editor**. Eso le da permiso para abrir el proyecto y ejecutar la implementación de prueba en su cuenta.
 
 ### Instalar el add-on como tester
 
