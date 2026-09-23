@@ -34,7 +34,8 @@ Todo el código del add-on vive en `src/`. Los archivos `.gs` de Apps Script com
 | `src/EstadoCard.gs` | Tarjeta de estado de envíos y lista de envíos abiertos. |
 | `src/EditarSolicitud.gs` | Editor de solicitudes ya guardadas (in-place, sin duplicar filas). |
 | `src/Tests.gs` | Tests unitarios de helpers puros (regex, columnas, parsing). |
-| `src/appsscript.json` | Manifiesto del add-on: scopes OAuth, triggers, logo, dominios permitidos. |
+| `src/appsscript.template.json` | Plantilla del manifiesto del add-on: scopes OAuth, triggers, dominios permitidos, y una URL de logo por defecto (gstatic Gmail). Está en git y es la fuente de verdad. |
+| `src/appsscript.json` | Manifiesto real que consume clasp. **No está en git** (lo genera `npm run setup` a partir de la plantilla, reemplazando la URL del logo por el que el usuario sube a su Drive). |
 
 ## Estructura del repositorio
 
@@ -42,14 +43,17 @@ Además del código en `src/`, el repositorio contiene:
 
 | Ubicación | Descripción |
 |---|---|
-| `src/` | Código fuente del add-on (`.gs` + `appsscript.json`). `clasp` toma esta carpeta como raíz de push (ver `rootDir` en `.clasp.json`). |
+| `src/` | Código fuente del add-on (`.gs` + `appsscript.template.json`). `clasp` toma esta carpeta como raíz de push (ver `rootDir` en `.clasp.json`). |
+| `scripts/setup.js` | Orquestador de `npm run setup`: crea la carpeta del proyecto en Drive del usuario, sube el logo, marca el logo como público, genera `src/appsscript.json` a partir de la plantilla, crea el proyecto Apps Script dentro de la carpeta y sube el código. |
+| `scripts/finish-login.sh` | Helper para completar `clasp login` desde Codespaces cuando el redirect a `localhost` falla. Se invoca con `npm run login:finish`. Ver sección **Login OAuth desde Codespaces**. |
+| `.devcontainer/devcontainer.json` | Configuración de GitHub Codespaces. Al abrir el repo en Codespaces, se levanta un contenedor con Node 20, deps de npm y ESLint ya instalados, para trabajar sin instalar nada en la PC local. |
 | `docs/` | Documentación interna del mantenedor (contexto del proyecto, roadmap, aviso de privacidad). No se versiona en git ni se sube a Apps Script. |
-| `assets/` | Assets estáticos del proyecto (por ejemplo el ícono del add-on). Se guardan aquí como fuente de verdad versionada, aunque el logo servido por el add-on en runtime se sirve desde una URL pública configurada en `appsscript.json`. |
+| `assets/` | Assets estáticos del proyecto (por ejemplo el ícono `icon_96x96.png`). El logo servido por el add-on en runtime lo sube el `npm run setup` desde acá a la carpeta Drive del usuario, y como fallback (para instalaciones manuales o si la subida falla) la plantilla apunta a un ícono público de Gmail alojado en gstatic. |
 | `secrets/` | Plantillas de `CLASP_JSON` y `CLASPRC_JSON`. Cada colaborador reemplaza los placeholders con sus valores reales y las usa para dos cosas: (1) `CLASP_JSON` se copia como `.clasp.json` local para trabajar con clasp desde la máquina, y (2) ambos archivos se pegan como secrets del repo en GitHub Actions para que el workflow de deploy pueda hacer `clasp push`. |
-| `.github/workflows/deploy.yml` | Workflow de GitHub Actions que lintea y sube el código a Apps Script en cada push a `main`. |
+| `.github/workflows/deploy.yml` | Workflow de GitHub Actions que lintea, genera el manifest desde la plantilla y sube el código a Apps Script en cada push a `main` o `desarrollo`. |
 | `.claspignore` | Lista de archivos que `clasp push` no debe subir al editor web de Apps Script. Versionada porque es política común del proyecto. |
 | `.eslintrc.js` | Configuración de ESLint con reglas de calidad de código y de seguridad (`eslint-plugin-security`) para los archivos `.gs`. |
-| `.gitignore` | Archivos y carpetas que git ignora (incluye `.clasp.json`, dependencias de npm, `docs/`, entre otros). |
+| `.gitignore` | Archivos y carpetas que git ignora (incluye `.clasp.json`, `src/appsscript.json` generado, dependencias de npm, `docs/`, entre otros). |
 | `package.json` y `package-lock.json` | Declaración y versiones exactas de dependencias de npm. El proyecto solo usa npm para lintear en local y en CI. El add-on no corre en Node. |
 | `README.md` | Este archivo. |
 
@@ -147,6 +151,8 @@ No hace falta instalar `clasp` a mano: se declara como dependencia de desarrollo
 
 **¿Y si no quieres o no puedes instalar Node?** Este flujo con `clasp` está pensado para colaboradores que van a modificar el código. Si solo quieres **usar** el add-on sin tocarlo, no necesitas Node ni clonar el repo: pídele al mantenedor del proyecto que te comparta acceso como tester al proyecto Apps Script existente (ver sección **Distribución** más abajo). Con ese acceso puedes instalar el add-on en tu cuenta directamente desde el editor web, sin línea de comandos.
 
+**Alternativa sin instalar nada local: GitHub Codespaces.** El repo trae `.devcontainer/devcontainer.json` configurado para levantar un contenedor con Node 20, deps de npm y ESLint ya instalados. Basta con abrir el repo en GitHub, botón verde **Code → Codespaces → Create codespace**. Tras uno o dos minutos tenés un VS Code en el navegador con todo listo para correr `npm run setup` sin instalar nada en tu PC. Detalle: si es la primera vez que hacés `clasp login` desde el Codespace, el flujo OAuth no puede completarse solo (el `localhost` del contenedor no es alcanzable desde tu navegador). Ver más abajo la sección **Login OAuth desde Codespaces** para el workaround.
+
 ### Ruta A: instalación básica (una sola vez, todo local)
 
 Con esta ruta creas tu propio proyecto Apps Script bajo tu cuenta, subes el código de este repo, y quedas listo para usar el add-on. No requiere GitHub Actions ni secrets.
@@ -168,21 +174,18 @@ npm install
 npm run setup
 ```
 
-El script `npm run setup` encadena tres pasos de `clasp`:
+El script `npm run setup` corre `scripts/setup.js` que orquesta el bootstrap completo del proyecto en tu cuenta:
 
-1. **`clasp login`**: abre el navegador para que autorices a `clasp` con tu cuenta de Google. Guarda el token OAuth en `~/.clasprc.json` (en Windows: `C:\Users\TuUsuario\.clasprc.json`). Si ya estabas logueado antes, este paso se salta solo.
-2. **`clasp create --title "Gestor de Solicitudes" --type standalone`**: crea un proyecto Apps Script vacío en tu cuenta y genera `.clasp.json` en la raíz con el `scriptId` correspondiente.
-3. **`clasp push`**: sube todos los `.gs` y el `appsscript.json` al proyecto recién creado.
+1. **Verifica credenciales de clasp**. Si `~/.clasprc.json` no existe, corre `clasp login` (abre el navegador para autorizar con tu Google). Si ya estabas logueado, se salta este paso.
+2. **Busca o crea la carpeta "Gestor de Solicitudes"** en tu Drive. Todos los artefactos del add-on van a vivir dentro.
+3. **Sube `assets/icon_96x96.png` a esa carpeta** y le pone permiso público, para que Google pueda cargarlo como logo del add-on. Si el archivo ya está subido, lo reusa.
+4. **Genera `src/appsscript.json`** a partir de `src/appsscript.template.json`, reemplazando la URL del logo por la del que acabas de subir. Si la subida falló, deja la URL de fallback (`gstatic` de Gmail).
+5. **Crea el proyecto Apps Script dentro de la carpeta** con `clasp create --parentId <folderId>`. Si `.clasp.json` ya existe, se salta este paso.
+6. **Escribe `.clasp.json` con todos los campos explícitos** (`scriptId`, `rootDir=src`, extensiones, etc.).
+7. **Sube el código** con `clasp push --force` (el `--force` evita la confirmación interactiva sobre el manifest).
+8. **Imprime instrucciones** con la URL del proyecto y el paso manual final para instalar el add-on en Gmail.
 
-**Interacción esperada durante el push:** en el paso 3, la primera vez que se sube el código, `clasp` detecta que el `appsscript.json` local es distinto al que Google generó por defecto en el proyecto vacío, y te pregunta:
-
-```
-? Manifest file has been updated. Do you want to push and overwrite? (y/N)
-```
-
-Escribe **`Y`** y presiona Enter. Es normal y esperado: estás confirmando que tu manifiesto (con los scopes OAuth, homepage triggers, logo, etc.) reemplace al placeholder vacío que trae el proyecto recién creado. Es la única confirmación interactiva del setup; después de eso, los `npm run push` posteriores no la vuelven a pedir salvo que cambies el manifiesto de nuevo.
-
-Al terminar, entra a [script.google.com](https://script.google.com) y verás el proyecto "Gestor de Solicitudes" con el código dentro. Desde ahí ya puedes instalarlo como implementación de prueba (ver sección **Distribución**).
+Al terminar, entra al link que imprime el script (o [script.google.com](https://script.google.com)) y verás la carpeta "Gestor de Solicitudes" en tu Drive con el logo y el proyecto Apps Script dentro. Para que aparezca en Gmail, sigue el paso manual que imprime el setup: **Deploy → Test deployments → Install → Done**.
 
 Para subir cambios locales al proyecto Apps Script en el futuro:
 
@@ -198,8 +201,30 @@ npm run pull
 
 **Notas:**
 
-- Si `.clasp.json` ya existe en la raíz del repo (por ejemplo, quedó de una prueba anterior), `clasp create` falla. Borra el archivo antes de correr `npm run setup` de nuevo, o edítalo a mano con el `scriptId` que quieras usar.
+- El setup es idempotente: se puede correr varias veces sin duplicar nada. La segunda corrida detecta que la carpeta y el logo ya están, y salta el `clasp create` si `.clasp.json` existe.
+- Si querés arrancar completamente desde cero (por ejemplo para forzar un proyecto nuevo o probar el flujo entero), borrá `.clasp.json` y `src/appsscript.json` antes de correr `npm run setup`. Si además querés que el logo se re-suba a una carpeta nueva, borrá también la carpeta "Gestor de Solicitudes" desde tu Drive.
+- El archivo `src/appsscript.json` que genera el setup **no está en git** (`.gitignore` lo excluye). Cada usuario tiene el suyo local, con su URL de logo personal. No hace falta cuidarse de commitearlo por accidente: git simplemente lo ignora.
 - La configuración por usuario (`SHEET_ID`, `SHEET_TAB`, `CARPETA_RAIZ_ID`) se define desde el propio add-on la primera vez que lo abres, no desde el repositorio. Ver sección **Configuración por usuario**.
+
+### Login OAuth desde Codespaces (workaround)
+
+Si trabajás desde GitHub Codespaces y es la primera vez que hacés `clasp login`, el flujo estándar no puede completarse solo. Google redirige el callback OAuth a `http://localhost:<PUERTO>/?code=...` y ese `localhost` es el del contenedor Codespaces, no el de tu navegador. Por eso el navegador muestra `ERR_CONNECTION_REFUSED` al final.
+
+Workaround en dos terminales dentro del Codespace:
+
+1. En la **terminal 1**, corré `npx clasp login`. El comando queda esperando el callback.
+2. Copiá la URL de Google que imprime, abrila en tu navegador Windows y autorizá con tu cuenta Google.
+3. Al fallar el redirect a `localhost`, copiá la URL completa de la barra del navegador (la que empieza con `http://localhost:<PUERTO>/?code=...`).
+4. En la **terminal 2** del mismo Codespace, corré:
+
+   ```bash
+   npm run login:finish
+   ```
+
+   Pegá la URL cuando te la pida y presioná Enter. Ese script hace el `curl` local que le entrega el `code` al servidor de clasp que sigue corriendo en la terminal 1.
+5. Volvé a la terminal 1: clasp imprime "Success!" y crea `~/.clasprc.json` con las credenciales.
+
+Después de esto ya podés correr `npm run setup` normalmente. El token dura varios meses; solo hay que repetir este paso si expira o si borrás el Codespace.
 
 ### Ruta C: deploy automático desde tu fork (opcional)
 
@@ -250,6 +275,24 @@ Con esta ruta, además de tener el add-on instalado localmente, configuras GitHu
    cat .clasp.json | xclip -selection clipboard
    ```
 
+   **Cómo copiar el contenido desde GitHub Codespaces:**
+
+   El terminal del Codespace no tiene acceso al portapapeles de tu PC. La forma limpia es abrir cada archivo en el editor y copiar desde ahí:
+
+   ```bash
+   code ~/.clasprc.json
+   ```
+
+   Se abre en una pestaña de VS Code (en el navegador del Codespace). Haz clic dentro del editor, **Ctrl+A** (seleccionar todo), **Ctrl+C** (copiar). Vas a la pantalla del secret `CLASPRC_JSON` en GitHub y **Ctrl+V** para pegar.
+
+   Repite con el `.clasp.json`:
+
+   ```bash
+   code .clasp.json
+   ```
+
+   Igual: Ctrl+A, Ctrl+C, pegar en el secret `CLASP_JSON`.
+
 4. Confirma que el workflow `.github/workflows/deploy.yml` corre sobre `main`.
 5. Haz un `git push` a `main` de tu fork. El workflow arranca solo y sube el código a tu Apps Script.
 
@@ -298,14 +341,15 @@ npm run lint
 
 ## Automatización de despliegue
 
-Cada push a la rama `main` dispara automáticamente el workflow definido en `.github/workflows/deploy.yml`. El workflow se ejecuta en un runner Ubuntu efímero de GitHub Actions y hace lo siguiente:
+Cada push a las ramas `main` o `desarrollo` dispara automáticamente el workflow definido en `.github/workflows/deploy.yml`. El workflow se ejecuta en un runner Ubuntu efímero de GitHub Actions y hace lo siguiente:
 
 1. Clona el código del repositorio.
 2. Instala Node.js 20 y las dependencias declaradas en `package.json` (`npm ci`).
 3. Corre ESLint (`npm run lint`). Si aparecen errores, el workflow se aborta.
 4. Instala clasp globalmente.
 5. Restaura las credenciales de clasp y el `.clasp.json` desde los GitHub Secrets del repositorio.
-6. Ejecuta `clasp push --force` contra el proyecto Apps Script destino.
+6. Genera `src/appsscript.json` a partir de `src/appsscript.template.json` (una copia directa, ya que la plantilla trae la URL de logo de fallback que el deploy usa por defecto).
+7. Ejecuta `clasp push --force` contra el proyecto Apps Script destino.
 
 Si cualquiera de los pasos falla, el workflow queda en rojo y Apps Script conserva la versión anterior. Los cambios llegan al editor web únicamente cuando el workflow termina en verde.
 
@@ -334,7 +378,11 @@ El add-on se distribuye a los testers como **implementación de prueba**, no com
 
 ### Compartir el proyecto con un tester
 
-Desde el editor de Apps Script, ícono de **Compartir** (👤➕ arriba a la derecha) → agregar el correo del tester con acceso de **Editor**. Eso le da permiso para abrir el proyecto y ejecutar la implementación de prueba en su cuenta.
+**Vía automática (recomendada).** Cualquier colaborador del repositorio puede dar acceso desde GitHub: pestaña **Actions** → **Compartir proyecto con tester** → **Run workflow** → escribir el correo de Google del tester. El workflow (`.github/workflows/compartir-proyecto.yml`) usa la cuenta del secret `CLASPRC_JSON` para darle acceso de **Editor** al proyecto y deja en el resumen de la corrida el link y los pasos siguientes. Solo agrega acceso; para quitarlo hay que hacerlo desde Drive. También se puede correr en local con `node scripts/compartir.js correo@dominio.com` (requiere `.clasp.json` y `~/.clasprc.json`).
+
+Si la organización restringe compartir archivos con dominios externos, el workflow falla con el error que devuelve Google.
+
+**Vía manual.** Desde el editor de Apps Script, ícono de **Compartir** (👤➕ arriba a la derecha) → agregar el correo del tester con acceso de **Editor**. Eso le da permiso para abrir el proyecto y ejecutar la implementación de prueba en su cuenta.
 
 ### Instalar el add-on como tester
 
