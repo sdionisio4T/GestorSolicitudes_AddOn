@@ -36,11 +36,10 @@ var CONFIG = {
 // sea un cambio de un solo lugar.
 var REGEX_EMAIL = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
 
-// Redaccion de logs. Los datos de salud son sensibles bajo Ley 1581/2012 y
-// Decreto 1377/2013; registrar PII en console.log queda fuera de la
-// finalidad autorizada. Con LOG_REDACT_PII en true los helpers de abajo
+// Redaccion de logs. Con LOG_REDACT_PII en true los helpers de abajo
 // enmascaran correo, asunto, numero de caso, servicio y URLs antes de
-// imprimir. Solo poner en false para depuracion local sobre datos ficticios.
+// imprimir en console.log. Solo poner en false para depuracion local
+// sobre datos ficticios.
 var LOG_REDACT_PII = true;
 
 function redactEmail_(v) {
