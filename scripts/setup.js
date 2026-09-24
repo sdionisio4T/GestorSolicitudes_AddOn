@@ -188,6 +188,20 @@ function ensureProject(folderId) {
     `clasp create --title "${PROJECT_TITLE}" --type standalone --parentId "${folderId}"`,
     { stdio: 'inherit' }
   );
+  // clasp create baja el manifest default a la raiz aunque el rootDir
+  // apunte a src/. Es un bug conocido de clasp. Lo borramos para no
+  // dejarlo confundiendo el repo.
+  limpiarManifestHuerfano();
+}
+
+function limpiarManifestHuerfano() {
+  try {
+    if (fs.existsSync('appsscript.json')) {
+      fs.unlinkSync('appsscript.json');
+    }
+  } catch (e) {
+    console.warn(`No se pudo borrar appsscript.json de la raiz: ${e.message}`);
+  }
 }
 
 function finalizeClaspJson() {

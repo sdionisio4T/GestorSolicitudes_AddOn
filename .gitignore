@@ -21,6 +21,12 @@ Thumbs.db
 # Contiene la URL del logo especifica de la cuenta que corrio setup.
 src/appsscript.json
 
+# Manifest huerfano que clasp pull deja en la raiz ignorando el rootDir=src
+# de .clasp.json. Es un bug conocido de clasp: los .gs si van a src/ pero
+# appsscript.json siempre cae en la raiz. Nadie lo usa (clasp push toma el
+# de src/), asi que se ignora para que no se cuele en commits por accidente.
+/appsscript.json
+
 
 # Dependencias de npm (ESLint). El codigo del add-on no corre en Node,
 # package.json y node_modules existen solo para lintar en local.

@@ -8,7 +8,7 @@
     "setup": "node scripts/setup.js",
     "login:finish": "bash scripts/finish-login.sh",
     "push": "clasp push",
-    "pull": "clasp pull"
+    "pull": "clasp pull && node -e \"try{require('fs').unlinkSync('appsscript.json')}catch(e){}\""
   },
   "devDependencies": {
     "@google/clasp": "^2.4.2",
