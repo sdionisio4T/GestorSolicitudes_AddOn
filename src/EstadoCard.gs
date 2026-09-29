@@ -339,7 +339,7 @@ function buildEstadoEnvioCard(envioId, opts) {
       (terminado.urlsPermiso || []).forEach(function(url, i) {
         seccionEstado.addWidget(
           CardService.newTextParagraph()
-            .setText((i + 1) + '. <a href="' + url + '">' + url + '</a>')
+            .setText((i + 1) + '. <a href="' + escaparHtml(url) + '">' + escaparHtml(url) + '</a>')
         );
       });
     }

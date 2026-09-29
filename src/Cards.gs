@@ -141,9 +141,9 @@ function buildValidacionCard(datos, messageId, seleccion, envioEnCursoId, envioE
   // todavía. Se omite para no mostrar "(no detectado)" al usuario.
   if (!esManual) {
     var seccionBanner = CardService.newCardSection();
-    var resumenHtml = '<b>Servicio:</b> ' + (datos.servicioDesplegar || '(no detectado)');
+    var resumenHtml = '<b>Servicio:</b> ' + escaparHtml(datos.servicioDesplegar || '(no detectado)');
     if (ambienteSeleccionado) {
-      resumenHtml += '<br><b>Ambiente:</b> ' + ambienteSeleccionado;
+      resumenHtml += '<br><b>Ambiente:</b> ' + escaparHtml(ambienteSeleccionado);
     }
     seccionBanner.addWidget(
       CardService.newTextParagraph().setText(resumenHtml)
