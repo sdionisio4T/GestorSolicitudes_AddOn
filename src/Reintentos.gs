@@ -406,7 +406,7 @@ function procesarSobre(sobre) {
       REINTENTOS_CONFIG.MAX_RELANZAMIENTOS + '). Ya copió ' +
       copiadosAcum + ' archivo' + (copiadosAcum === 1 ? '' : 's') + '. ' +
       'Quedan ' + pendientesAhora + ' enlace' + (pendientesAhora === 1 ? '' : 's') + ' por copiar.';
-    actualizarSheetPorEnvioId(sheet, sobre.envioId, textoProgreso, null);
+    actualizarSheetPorEnvioId(sheet, sobre.envioId, textoProgreso, null, res.jsonUrls);
 
     // NOTA: NO creamos el trigger acá. El barrido en reintentarCopiaPendiente
     // se encarga al final vía reprogramarSiHaySobres_() — así garantizamos
@@ -439,7 +439,7 @@ function procesarSobre(sobre) {
     textoL = 'Sin copiar: ' + resumirMotivos(todosLosFallos) + '.';
   }
 
-  actualizarSheetPorEnvioId(sheet, sobre.envioId, textoL, todoOk ? carpetaDestino : null);
+  actualizarSheetPorEnvioId(sheet, sobre.envioId, textoL, todoOk ? carpetaDestino : null, res.jsonUrls);
 
   // Si quedaron URLs con motivo 'permiso' — combinando las que ya venían
   // de la fase 1 (sobre.urlsPermisoPreexistentes) y las nuevas descubiertas
@@ -470,9 +470,9 @@ function procesarSobre(sobre) {
  * coincide con envioId y les actualiza K (Estado Copia, col 11). Si
  * carpetaSiOk se proveé, además sobrescribe C (Drive, col 3) con el
  * hipervínculo "Ver carpeta copiada" (mismo patrón que fase 1 con éxito
- * total).
+ * total). Si vienen jsonUrls, se agregan a la columna Archivos JSON (N).
  */
-function actualizarSheetPorEnvioId(sheet, envioId, textoL, carpetaSiOk) {
+function actualizarSheetPorEnvioId(sheet, envioId, textoL, carpetaSiOk, jsonUrls) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 1) {
     console.error('[Reintento] Sheet vacío al buscar envío ' + envioId);
@@ -508,6 +508,12 @@ function actualizarSheetPorEnvioId(sheet, envioId, textoL, carpetaSiOk) {
     filasMatch.forEach(function(rowIdx) {
       sheet.getRange(rowIdx, SHEET_COLS.DRIVE).setRichTextValue(rich);
     });
+  }
+
+  try {
+    agregarJsonAFilas_(sheet, filasMatch, jsonUrls);
+  } catch (errJson) {
+    console.error('[Reintento] No se pudo escribir Archivos JSON para ' + envioId + ': ' + errJson.message);
   }
 }
 

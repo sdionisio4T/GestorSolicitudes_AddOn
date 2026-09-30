@@ -152,9 +152,10 @@ var SHEET_COLS = {
   FECHA:              10,
   ESTADO_COPIA:       11,
   CORREO_SOLICITANTE: 12,
-  ID_ENVIO:           13
+  ID_ENVIO:           13,
+  ARCHIVOS_JSON:      14
 };
-var SHEET_NUM_COLS = 13;
+var SHEET_NUM_COLS = 14;
 
 // Nombres de los headers que el add-on escribe al crear un Sheet vacío.
 // Deben coincidir 1 a 1 con SHEET_COLS (mismo orden). NO se usan para
@@ -164,7 +165,8 @@ var SHEET_NUM_COLS = 13;
 var SHEET_HEADERS = [
   'Número de caso', 'Servicio', 'Drive documentación', 'Repositorio',
   'SonarQube', 'Ambiente', 'Componente', 'Estado',
-  'Artefactos', 'Fecha', 'Estado copia', 'Correo solicitante', 'ID envío'
+  'Artefactos', 'Fecha', 'Estado copia', 'Correo solicitante', 'ID envío',
+  'Archivos JSON'
 ];
 
 /**
@@ -317,7 +319,7 @@ function sheetPestanaVacia_(pestana) {
 }
 
 /**
- * Escribe los 13 headers en la fila 1 de la pestaña, los pone en bold
+ * Escribe los headers en la fila 1 de la pestaña, los pone en bold
  * y congela la fila. Solo debe llamarse cuando sheetPestanaVacia_ es
  * true — nunca sobrescribe headers existentes.
  */

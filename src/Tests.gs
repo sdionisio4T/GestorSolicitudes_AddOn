@@ -452,7 +452,7 @@ function smokeTest() {
     sheet.getRange(startRow, 1, 1, SHEET_NUM_COLS).setValues([[
       '0000', 'SMOKE-TEST-BORRAR', '', '', '', 'Pruebas', 'ESB',
       'PENDIENTE - smoke test', '', new Date(), 'Smoke test OK',
-      'smoke@test.local', envioIdSmoke
+      'smoke@test.local', envioIdSmoke, ''
     ]]);
 
     var leido = sheet.getRange(startRow, SHEET_COLS.ID_ENVIO).getValue();

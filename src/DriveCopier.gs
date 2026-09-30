@@ -124,8 +124,12 @@ function existeCarpetaConNombre(padre, nombre) {
  *   copiados: 5,
  *   totalIntentados: 6,
  *   fallos: [ { url, motivo, mensaje } ],
- *   tiempoAgotado: false
+ *   tiempoAgotado: false,
+ *   jsonUrls: [ 'https://drive.google.com/file/d/...' ]
  * }
+ *
+ * `jsonUrls` son los links a las copias de archivos .json que quedaron en
+ * el destino (incluidas las que ya existían y se saltaron en un reintento).
  *
  * Motivos posibles:
  *   'permiso'   — el usuario no tiene acceso al archivo/carpeta origen
@@ -144,13 +148,15 @@ function copiarUrlsADestino(urls, carpetaDestino, presupuestoMs, opciones) {
   // recursión — si el llamador nos pasa uno, lo respetamos (así múltiples
   // llamadas dentro del mismo reintento comparten memoria).
   if (!opts.cacheCarpetas) opts.cacheCarpetas = {};
+  opts.jsonUrls = [];
 
   var resultado = {
     copiados: 0,
     saltados: 0,
     totalIntentados: 0,
     fallos: [],
-    tiempoAgotado: false
+    tiempoAgotado: false,
+    jsonUrls: opts.jsonUrls
   };
 
   var listaUrls = (urls || [])
@@ -255,12 +261,26 @@ function copiarArchivoPorId(fileId, destino, opciones) {
   var opts = opciones || {};
   var archivo = DriveApp.getFileById(fileId);
   var nombre = archivo.getName();
-  if (opts.saltarSiExiste && destino.getFilesByName(nombre).hasNext()) {
-    return { copiado: false, saltado: true };
+  if (opts.saltarSiExiste) {
+    var existentes = destino.getFilesByName(nombre);
+    if (existentes.hasNext()) {
+      registrarCopiaJson_(existentes.next(), opts);
+      return { copiado: false, saltado: true };
+    }
   }
   chequearTamanoArchivo_(archivo);
-  archivo.makeCopy(nombre, destino);
+  registrarCopiaJson_(archivo.makeCopy(nombre, destino), opts);
   return { copiado: true, saltado: false };
+}
+
+/**
+ * Si la copia es un .json, anota su link en opts.jsonUrls para que quien
+ * llama lo escriba en la columna Archivos JSON del Sheet.
+ */
+function registrarCopiaJson_(copia, opts) {
+  if (!opts.jsonUrls || !/\.json$/i.test(copia.getName())) return;
+  var url = copia.getUrl();
+  if (opts.jsonUrls.indexOf(url) === -1) opts.jsonUrls.push(url);
 }
 
 /**
@@ -322,11 +342,13 @@ function copiarCarpetaRecursivo(folderId, destino, inicio, presupuesto, esRaiz, 
     }
     var f = archivos.next();
     try {
-      if (opts.saltarSiExiste && subDestino.getFilesByName(f.getName()).hasNext()) {
+      var existentes = opts.saltarSiExiste ? subDestino.getFilesByName(f.getName()) : null;
+      if (existentes && existentes.hasNext()) {
+        registrarCopiaJson_(existentes.next(), opts);
         res.saltados++;
       } else {
         chequearTamanoArchivo_(f);
-        f.makeCopy(f.getName(), subDestino);
+        registrarCopiaJson_(f.makeCopy(f.getName(), subDestino), opts);
         res.copiados++;
       }
     } catch (e) {

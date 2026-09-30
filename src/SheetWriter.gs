@@ -234,7 +234,8 @@ function escribirFilasAlSheet_(input) {
       SHEET_COLS.ESTADO,
       SHEET_COLS.ARTEFACTOS,
       SHEET_COLS.ESTADO_COPIA,
-      SHEET_COLS.CORREO_SOLICITANTE
+      SHEET_COLS.CORREO_SOLICITANTE,
+      SHEET_COLS.ARCHIVOS_JSON
     ];
 
     startRow = sheet.getLastRow() + 1;
@@ -278,7 +279,8 @@ function escribirFilasAlSheet_(input) {
         new Date(), // FECHA — se escribe como Date real; el formato dd/MM/yyyy se aplica al rango más abajo
         sanitizarParaSheet(estadoCopiaInicial),
         correoSolicitante,
-        envioId
+        envioId,
+        '' // ARCHIVOS_JSON — se llena después de copiar, si hay .json
       ];
     });
 
@@ -585,6 +587,12 @@ function consolidarYActualizarSheet_(input, escritura, resultadosPorGrupo, urlsA
       }
       sheet.getRange(startRow, 3, filasCreadas, 1).setRichTextValues(filasC);
     }
+
+    // Column N (Archivos JSON) — links a las copias .json de cada grupo.
+    resultadosPorGrupo.forEach(function(r) {
+      var filasGrupo = r.indices.map(function(i) { return startRow + i; });
+      agregarJsonAFilas_(sheet, filasGrupo, r.resumenCopia ? r.resumenCopia.jsonUrls : []);
+    });
 
     if (hayPendientesDeAcceso) {
       var estadoMatriz = [];
@@ -1032,6 +1040,33 @@ function construirCeldaConEnlaces(valorCampo) {
 }
 
 /**
+ * Agrega los links de las copias .json a la columna Archivos JSON (N) de
+ * las filas dadas, sin repetir los que ya estaban (los reintentos pueden
+ * volver a reportar los mismos). En Sheets creados antes de esta columna,
+ * si la fila 1 tiene cabeceras y la N está vacía, escribe el título.
+ */
+function agregarJsonAFilas_(sheet, filas, jsonUrls) {
+  if (!jsonUrls || jsonUrls.length === 0 || !filas || filas.length === 0) return;
+
+  var celdaHeader = sheet.getRange(1, SHEET_COLS.ARCHIVOS_JSON);
+  if (String(sheet.getRange(1, 1).getValue()).trim() !== '' &&
+      String(celdaHeader.getValue()).trim() === '') {
+    celdaHeader.setValue(SHEET_HEADERS[SHEET_COLS.ARCHIVOS_JSON - 1]).setFontWeight('bold');
+  }
+
+  filas.forEach(function(row) {
+    var celda = sheet.getRange(row, SHEET_COLS.ARCHIVOS_JSON);
+    var urls = String(celda.getValue() || '').split('\n')
+      .map(function(u) { return u.trim(); })
+      .filter(function(u) { return u !== ''; });
+    jsonUrls.forEach(function(u) {
+      if (urls.indexOf(u) === -1) urls.push(u);
+    });
+    celda.setRichTextValue(construirCeldaConEnlaces(urls.join('\n')));
+  });
+}
+
+/**
  * Convierte una lista de fallos de copia en una frase corta y legible
  * para el toast y la celda de Estado Copia. Agrupa por motivo, ej:
  * "2 sin acceso, 1 sin tiempo".
@@ -1291,6 +1326,12 @@ function copiarUrlsPostEnvio_(sheet, envioId, filasRow, componentes, servicioDes
       sheet.getRange(row, SHEET_COLS.ID_ENVIO).setValue(subEnvioIdMatriz[j][0]);
       sheet.getRange(row, SHEET_COLS.DRIVE).setRichTextValue(richTextColC[j][0]);
     }
+
+    // Col N: links a las copias .json de cada grupo.
+    resultadosPorGrupo.forEach(function(res) {
+      var filasGrupo = res.indices.map(function(i) { return filasRow[i]; });
+      agregarJsonAFilas_(sheet, filasGrupo, res.resumenCopia ? res.resumenCopia.jsonUrls : []);
+    });
   } catch (errUpd) {
     console.error('[EditCopia] No se pudo actualizar el Sheet: ' + errUpd.message);
   }
