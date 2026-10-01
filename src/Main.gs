@@ -28,7 +28,7 @@ function buildHomepageCard(messageIdVolver, messageIdDetectar, activo) {
     .setHeader(
       CardService.newCardHeader()
         .setTitle('Gestor de Solicitudes')
-        .setSubtitle('Panel principal')
+        .setSubtitle('V1.0.0')
     );
 
   // ── Botón "Volver al caso que estás armando" (siempre que haya activo) ──
