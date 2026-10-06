@@ -1,7 +1,7 @@
 {
   "name": "Gestor de Solicitudes",
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-20-bookworm",
-  "postCreateCommand": "npm ci && npm install -g @google/clasp",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-24-bookworm",
+  "postCreateCommand": "npm ci && npm install -g @google/clasp@3.4.1",
   "remoteEnv": {
     "CLASPRC_JSON": "${localEnv:CLASPRC_JSON}"
   },

@@ -47,7 +47,7 @@ Además del código en `src/`, el repositorio contiene:
 | `scripts/setup.js` | Orquestador de `npm run setup`: crea la carpeta del proyecto en Drive del usuario, sube el logo, marca el logo como público, genera `src/appsscript.json` a partir de la plantilla, crea el proyecto Apps Script dentro de la carpeta y sube el código. |
 | `scripts/generar-manifest.js` | Lo usa el workflow de deploy: genera `src/appsscript.json` desde la plantilla conservando el logo que el proyecto ya tiene en Apps Script. |
 | `scripts/finish-login.sh` | Helper para completar `clasp login` desde Codespaces cuando el redirect a `localhost` falla. Se invoca con `npm run login:finish`. Ver sección **Login OAuth desde Codespaces**. |
-| `.devcontainer/devcontainer.json` | Configuración de GitHub Codespaces. Al abrir el repo en Codespaces, se levanta un contenedor con Node 20, deps de npm y ESLint ya instalados, para trabajar sin instalar nada en la PC local. |
+| `.devcontainer/devcontainer.json` | Configuración de GitHub Codespaces. Al abrir el repo en Codespaces, se levanta un contenedor con Node 24, deps de npm y ESLint ya instalados, para trabajar sin instalar nada en la PC local. |
 | `docs/` | Documentación interna del mantenedor (contexto del proyecto, roadmap, aviso de privacidad). No se versiona en git ni se sube a Apps Script. |
 | `assets/` | Assets estáticos del proyecto (por ejemplo el ícono `icon_96x96.png`). El logo servido por el add-on en runtime lo sube el `npm run setup` desde acá a la carpeta Drive del usuario, y como fallback (para instalaciones manuales o si la subida falla) la plantilla apunta a un ícono público de Gmail alojado en gstatic. |
 | `secrets/` | Plantillas de `CLASP_JSON` y `CLASPRC_JSON`. Cada colaborador reemplaza los placeholders con sus valores reales y las usa para dos cosas: (1) `CLASP_JSON` se copia como `.clasp.json` local para trabajar con clasp desde la máquina, y (2) ambos archivos se pegan como secrets del repo en GitHub Actions para que el workflow de deploy pueda hacer `clasp push`. |
@@ -229,7 +229,7 @@ Los dos persisten entre reinicios del computador. Los vas a necesitar tal cual p
 
 **Cuándo elegirla:** no quieres o no puedes instalar Node/git en tu computador; quieres probarlo rápido sin comprometerte a nada local; el PC donde trabajas no permite instalar software.
 
-**Requisitos:** solo una cuenta de GitHub. Todo el resto (Node 20, npm, clasp, ESLint) viene preinstalado en el contenedor gracias a `.devcontainer/devcontainer.json`.
+**Requisitos:** solo una cuenta de GitHub. Todo el resto (Node 24, npm, clasp, ESLint) viene preinstalado en el contenedor gracias a `.devcontainer/devcontainer.json`.
 
 **Paso previo obligatorio:** habilita la **Google Apps Script API** en tu cuenta de Google (mismo paso que en la Ruta A):
 
@@ -354,13 +354,12 @@ Esta sección es para quien va a **modificar el código** y quiere que cada `git
 Cada push a las ramas `main` o `desarrollo` dispara `.github/workflows/deploy.yml`. Se ejecuta en un runner Ubuntu efímero de GitHub Actions y hace:
 
 1. Clona el código del repo.
-2. Instala Node.js 20 y las dependencias de `package.json` (`npm ci`).
+2. Instala Node.js 24 y las dependencias de `package.json` (`npm ci`), incluida clasp en la versión fija del `package.json`.
 3. Corre ESLint (`npm run lint`). Si hay errores, aborta.
-4. Instala clasp globalmente.
-5. Restaura las credenciales de clasp y el `.clasp.json` desde los GitHub Secrets.
-6. Lee el logo que el proyecto ya tiene en Apps Script (`clasp pull`) y restaura el código del repo.
-7. Genera `src/appsscript.json` a partir de `src/appsscript.template.json`, **conservando el logo leído del paso anterior**. Si el proyecto no tiene logo propio o falla la lectura, usa el logo de fallback.
-8. Ejecuta `clasp push --force` contra el proyecto Apps Script.
+4. Restaura las credenciales de clasp y el `.clasp.json` desde los GitHub Secrets.
+5. Lee el logo que el proyecto ya tiene en Apps Script (`clasp pull`) y restaura el código del repo.
+6. Genera `src/appsscript.json` a partir de `src/appsscript.template.json`, **conservando el logo leído del paso anterior**. Si el proyecto no tiene logo propio o falla la lectura, usa el logo de fallback.
+7. Ejecuta `clasp push --force` contra el proyecto Apps Script.
 
 Si cualquiera de los pasos falla, el workflow queda en rojo y Apps Script conserva la versión anterior. Los cambios llegan al editor web únicamente cuando el workflow termina en verde.
 

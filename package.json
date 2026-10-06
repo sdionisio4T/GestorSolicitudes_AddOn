@@ -11,7 +11,7 @@
     "pull": "clasp pull && node -e \"try{require('fs').unlinkSync('appsscript.json')}catch(e){}\""
   },
   "devDependencies": {
-    "@google/clasp": "^2.4.2",
+    "@google/clasp": "3.4.1",
     "eslint": "^8.57.0",
     "eslint-plugin-security": "^4.0.1"
   }

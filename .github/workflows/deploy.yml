@@ -42,16 +42,17 @@ jobs:
     steps:
       # 1) Bajar el codigo del repo al runner temporal
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 2) Instalar Node.js
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
 
-      # 3) Instalar dependencias del proyecto (ESLint, plugins)
+      # 3) Instalar dependencias del proyecto (ESLint, plugins y clasp con
+      #    la version fija del package.json)
       - name: Install dependencies
         run: npm ci
 
@@ -60,40 +61,40 @@ jobs:
       - name: Run ESLint
         run: npm run lint
 
-      # 5) Instalar clasp globalmente en el runner
-      - name: Install clasp
-        run: npm install -g @google/clasp
-
-      # 6) Restaurar el token de autenticacion desde el Secret al home del
+      # 5) Restaurar el token de autenticacion desde el Secret al home del
       #    runner. Sin esto clasp no esta logueado y Google rechaza el push.
       - name: Restore clasp auth
-        run: echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
 
-      # 7) Restaurar el .clasp.json (con el scriptId del proyecto) desde
+      # 6) Restaurar el .clasp.json (con el scriptId del proyecto) desde
       #    el Secret. Sin esto clasp no sabe a que Apps Script subir.
       - name: Restore .clasp.json
-        run: echo '${{ secrets.CLASP_JSON }}' > .clasp.json
+        env:
+          CLASP_JSON: ${{ secrets.CLASP_JSON }}
+        run: printf '%s' "$CLASP_JSON" > .clasp.json
 
-      # 8) Leer el logo que el proyecto ya tiene en Apps Script. El manifest
+      # 7) Leer el logo que el proyecto ya tiene en Apps Script. El manifest
       #    real esta en .gitignore, asi que el runner no lo tiene; se baja
       #    el del proyecto, se guarda aparte y se restaura el codigo del repo
       #    para no subir versiones viejas. Si la lectura falla, sigue con la
       #    plantilla.
       - name: Read current logo from Apps Script
         run: |
-          clasp pull || echo "::warning::No se pudo leer el proyecto, se usara el logo de la plantilla."
+          npx clasp pull || echo "::warning::No se pudo leer el proyecto, se usara el logo de la plantilla."
           if [ -f src/appsscript.json ]; then cp src/appsscript.json "$RUNNER_TEMP/remote-manifest.json"; fi
           git checkout -- src
           git clean -fdq src
           rm -f src/appsscript.json
 
-      # 9) Generar src/appsscript.json a partir de la plantilla, conservando
+      # 8) Generar src/appsscript.json a partir de la plantilla, conservando
       #    el logo leido en el paso anterior. Sin logo propio, queda el de
       #    la plantilla.
       - name: Generate manifest from template
         run: node scripts/generar-manifest.js "$RUNNER_TEMP/remote-manifest.json"
 
-      # 10) Ejecutar el push. --force acepta automaticamente cambios en el
+      # 9) Ejecutar el push. --force acepta automaticamente cambios en el
       #    manifest (appsscript.json) sin pedir confirmacion interactiva.
       - name: Push to Apps Script
-        run: clasp push --force
+        run: npx clasp push --force
