@@ -211,5 +211,14 @@ function buildAyudaCard() {
             .setText('Para copiar archivos que están en el Drive de otras personas (los desarrolladores que mandan la solicitud), Google exige el permiso amplio de Drive. Sin ese permiso, el add-on solo podría acceder a archivos que ya abriste explícitamente.')
         )
     )
+
+    // ═══ PIE ═══
+    .addSection(
+      CardService.newCardSection()
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('<font color="#5f6368">Gestor de Solicitudes · versión ' + VERSION_APP + '</font>')
+        )
+    )
     .build();
 }

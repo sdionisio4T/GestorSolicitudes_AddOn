@@ -47,6 +47,7 @@ function buildDiagnosticoCard() {
     .setHeader('Estado actual')
     .addWidget(
       CardService.newTextParagraph().setText(
+        '<b>Versión:</b> ' + VERSION_APP + '\n' +
         '<b>Envíos con reintento en curso:</b> ' + estado.sobresPendientes + '\n' +
         '<b>Envíos esperando acceso:</b> ' + estado.sobresTerminados + '\n' +
         '<b>Reintentos programados:</b> ' + estado.triggersReintento

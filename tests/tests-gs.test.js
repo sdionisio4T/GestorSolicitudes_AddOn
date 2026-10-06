@@ -10,3 +10,8 @@ test('correrTodosLosTests de Tests.gs', () => {
   assert.strictEqual(resultado.fail, 0);
   assert.ok(resultado.ok > 0, 'no corrio ningun test');
 });
+
+test('VERSION_APP tiene formato MAYOR.MENOR.PARCHE', () => {
+  const gs = cargarGs({ console: { log() {}, warn() {}, error() {} } });
+  assert.match(gs.VERSION_APP, /^\d+\.\d+\.\d+$/);
+});
