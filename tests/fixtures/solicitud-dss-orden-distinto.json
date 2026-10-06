@@ -1,0 +1,11 @@
+{
+  "asunto": "Solicitud caso 7412",
+  "esperado": {
+    "numeroCaso": "7412",
+    "servicioDesplegar": "ServicioTercerosApiRest",
+    "correoSolicitante": "equipo.integracion@ejemplo.com",
+    "driveDocumentacion": "https://drive.google.com/drive/folders/1EjemploCarpetaDss00000abcdefgh?usp=drive_link",
+    "repositorio": "https://github.com/ejemploorg/servicioterceros/tree/preproduccion/DSS/src/ServicioTerceros",
+    "ambienteExtraido": "Preproducción"
+  }
+}

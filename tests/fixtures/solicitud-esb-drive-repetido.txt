@@ -1,0 +1,40 @@
+[Buzón exclusivo para envío de información, por favor no responder a este correo, en caso de novedad contactarse con el equipo de Arquitectura]
+
+EMPRESA
+
+Buen día.
+
+Tenemos una nueva solicitud para el equipo de desarrollo del siguiente correo:equipo.integracion@ejemplo.com
+
+.
+El caso asignado con numero 7350 contiene la siguiente información:
+
+Repositorio Github de código fuente de la versión a desplegar WSO2
+https://github.com/ejemploorg/servicioejemplo
+Nombre del servicio a desplegar
+ServicioEjemploDS y ServicioEjemploPS
+URL del Manual de Despliegue WSO2
+https://drive.google.com/drive/folders/1EjemploCarpetaDocs0000abcdefgh?usp=drive_link ESB/docs y EI/docs
+URL de Documento Entradas y salidas WSO2
+https://drive.google.com/drive/folders/1EjemploCarpetaDocs0000abcdefgh?usp=drive_link ESB/docs y EI/docs
+Documentación API OpenAPI -Swagger- WSO2
+https://drive.google.com/drive/folders/1EjemploCarpetaDocs0000abcdefgh?usp=drive_link ESB/docs y EI/docs
+El despliegue contiene suscripción a un usuario en WSO2?
+No
+Aprobación arquitectura (Acta o fecha en que fue aprobado en el comité de arquitectura o número de concepto)
+Plan de mejoras manejo de errores
+Describa claramente en que consiste el cambio
+Se incluyen los proyectos configs y composites dentro de un multi modulo maven con su respectiva configuracion para despliegues en git y nexus. Se crea secuencia de fallo ServicioEjemploPS_FaultSQ para separar la logica de errores y con mas registros. Se incluyen 3 timeout en dataservice para evitar que las peticiones utilicen hilos innecesarios cuando las consultas demoren.
+Proyecto, Evolutivo o Cambio al que pertenece el servicio WSO2
+Evolutivo
+Tipo de artefactos a desplegar
+Proxy, Dataservice, Sequence
+Ambiente a desplegar
+Preproducción
+URL del serviceProfiler WSO2
+https://drive.google.com/drive/folders/1EjemploCarpetaDocs0000abcdefgh?usp=drive_link ESB/docs y EI/docs
+
+
+Para dar respuesta puedes hacer clic aquí
+
+Gracias.

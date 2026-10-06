@@ -1,0 +1,11 @@
+{
+  "asunto": "Solicitud caso 7350",
+  "esperado": {
+    "numeroCaso": "7350",
+    "servicioDesplegar": "ServicioEjemploDS y ServicioEjemploPS",
+    "correoSolicitante": "equipo.integracion@ejemplo.com",
+    "driveDocumentacion": "https://drive.google.com/drive/folders/1EjemploCarpetaDocs0000abcdefgh?usp=drive_link",
+    "repositorio": "https://github.com/ejemploorg/servicioejemplo",
+    "ambienteExtraido": "Preproducción"
+  }
+}

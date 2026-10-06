@@ -1,0 +1,39 @@
+Buen día.
+
+Tenemos una nueva solicitud para el equipo de desarrollo del siguiente correo:equipo.integracion@ejemplo.com
+
+.
+El caso asignado con numero 7412 contiene la siguiente información:
+
+Ambiente a desplegar
+Preproducción
+Describa claramente en que consiste el cambio
+Se agrega query timeout y se ajusta repositorio para compilación en nexus
+URL de Documento Entradas y salidas WSO2
+https://drive.google.com/drive/folders/1EjemploCarpetaDss00000abcdefgh?usp=drive_link
+Repositorio Github de código fuente de la versión a desplegar WSO2
+https://github.com/ejemploorg/servicioterceros/tree/preproduccion/DSS/src/ServicioTerceros
+URL del serviceProfiler WSO2
+https://drive.google.com/drive/folders/1EjemploCarpetaDss00000abcdefgh?usp=drive_link
+URL del Manual de Despliegue WSO2
+https://drive.google.com/drive/folders/1EjemploCarpetaDss00000abcdefgh?usp=drive_link
+Tipo de artefactos a desplegar
+Dataservice
+Proyecto, Evolutivo o Cambio al que pertenece el servicio WSO2
+Mejoras de la capa
+Aprobación arquitectura (Acta o fecha en que fue aprobado en el comité de arquitectura o número de concepto)
+Mejoras de la capa
+Nombre del servicio a desplegar
+ServicioTercerosApiRest
+Documentación API OpenAPI -Swagger- WSO2
+https://drive.google.com/drive/folders/1EjemploCarpetaDss00000abcdefgh?usp=drive_link
+El despliegue contiene suscripción a un usuario en WSO2?
+No
+
+
+Para dar respuesta puedes hacer clic aquí
+
+Gracias.
+
+Cordialmente;
+Dirección de Arquitectura
