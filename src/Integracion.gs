@@ -28,7 +28,8 @@ function correrIntegracion() {
   var cfg = leerConfigIntegracion_();
   var marca = new Date().getTime().toString(36).toUpperCase();
   var servicio = 'ZZ-INTEGRACION-' + marca;
-  var numeroCaso = '0000';
+  // Sin ceros a la izquierda: Sheets guardaría '0000' como el número 0.
+  var numeroCaso = '9999';
 
   var revisiones = { ok: 0, fallos: [] };
   function revisar(condicion, descripcion) {
@@ -115,10 +116,9 @@ function correrIntegracion() {
       [esb, api].forEach(function(f) {
         var v = f.valores;
         var comp = v[SHEET_COLS.COMPONENTE - 1];
-        revisar(String(v[SHEET_COLS.NUMERO_CASO - 1]) === numeroCaso &&
-                v[SHEET_COLS.SERVICIO - 1] === servicio &&
-                v[SHEET_COLS.AMBIENTE - 1] === 'Pruebas',
-                comp + ': caso, servicio y ambiente correctos');
+        var leidos = [v[SHEET_COLS.NUMERO_CASO - 1], v[SHEET_COLS.SERVICIO - 1], v[SHEET_COLS.AMBIENTE - 1]];
+        revisar(String(leidos[0]) === numeroCaso && leidos[1] === servicio && leidos[2] === 'Pruebas',
+                comp + ': caso, servicio y ambiente correctos (leído: ' + leidos.join(' | ') + ')');
         revisar(String(v[SHEET_COLS.ESTADO - 1]).indexOf('PENDIENTE') === 0,
                 comp + ': columna Estado empieza con PENDIENTE');
         revisar(v[SHEET_COLS.CORREO_SOLICITANTE - 1] === 'integracion@ejemplo.com',
@@ -216,15 +216,44 @@ function leerConfigIntegracion_() {
   if (cfg.carpetaId === carpetaAddOn) {
     throw new Error('TEST_CARPETA_ID es la misma carpeta raíz configurada en el add-on. Usa una carpeta de prueba.');
   }
+
+  var origen = parsearIdDrive(cfg.origenUrl);
+  if (!origen) throw new Error('TEST_ORIGEN_URL no es un link de Drive válido.');
+  console.log('[Integración] Origen a copiar (TEST_ORIGEN_URL): ' + describirCarpeta_(origen.id));
+  if (origen.tipo === 'carpeta' && carpetaContieneA_(origen.id, cfg.carpetaId)) {
+    throw new Error('TEST_ORIGEN_URL es la carpeta de prueba o una carpeta que la contiene: la prueba se copiaría a sí misma. ' +
+                    'Usa una carpeta pequeña fuera de TEST_CARPETA_ID.');
+  }
   return cfg;
+}
+
+/**
+ * true si `contenedorId` es `carpetaId` o alguna de sus carpetas de arriba.
+ */
+function carpetaContieneA_(contenedorId, carpetaId) {
+  var pendientes = [DriveApp.getFolderById(carpetaId)];
+  var vistos = {};
+  while (pendientes.length > 0) {
+    var c = pendientes.pop();
+    if (vistos[c.getId()]) continue;
+    vistos[c.getId()] = true;
+    if (c.getId() === contenedorId) return true;
+    var padres = c.getParents();
+    while (padres.hasNext()) pendientes.push(padres.next());
+  }
+  return false;
 }
 
 function describirCarpeta_(id) {
   if (!id) return '(sin configurar)';
   try {
-    return '"' + DriveApp.getFolderById(id).getName() + '" (' + id + ')';
-  } catch (e) {
-    return '(sin acceso) (' + id + ')';
+    return 'carpeta "' + DriveApp.getFolderById(id).getName() + '" (' + id + ')';
+  } catch (eCarpeta) {
+    try {
+      return 'archivo "' + DriveApp.getFileById(id).getName() + '" (' + id + ')';
+    } catch (eArchivo) {
+      return '(sin acceso) (' + id + ')';
+    }
   }
 }
 
