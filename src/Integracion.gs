@@ -210,10 +210,22 @@ function leerConfigIntegracion_() {
   if (cfg.sheetId === obtenerSheetId()) {
     throw new Error('TEST_SHEET_ID es el mismo Sheet configurado en el add-on. Usa un Sheet de prueba.');
   }
-  if (cfg.carpetaId === obtenerCarpetaRaizId()) {
+  var carpetaAddOn = obtenerCarpetaRaizId();
+  console.log('[Integración] Carpeta de prueba (TEST_CARPETA_ID): ' + describirCarpeta_(cfg.carpetaId));
+  console.log('[Integración] Carpeta raíz del add-on (⚙ Configuración): ' + describirCarpeta_(carpetaAddOn));
+  if (cfg.carpetaId === carpetaAddOn) {
     throw new Error('TEST_CARPETA_ID es la misma carpeta raíz configurada en el add-on. Usa una carpeta de prueba.');
   }
   return cfg;
+}
+
+function describirCarpeta_(id) {
+  if (!id) return '(sin configurar)';
+  try {
+    return '"' + DriveApp.getFolderById(id).getName() + '" (' + id + ')';
+  } catch (e) {
+    return '(sin acceso) (' + id + ')';
+  }
 }
 
 /**
