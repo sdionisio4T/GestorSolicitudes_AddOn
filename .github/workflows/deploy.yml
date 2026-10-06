@@ -61,6 +61,11 @@ jobs:
       - name: Run ESLint
         run: npm run lint
 
+      # 4b) Correr en Node los tests de src/Tests.gs. Si alguno falla,
+      #    aborta y no se sube nada a Apps Script.
+      - name: Run tests
+        run: npm test
+
       # 5) Restaurar el token de autenticacion desde el Secret al home del
       #    runner. Sin esto clasp no esta logueado y Google rechaza el push.
       - name: Restore clasp auth

@@ -356,10 +356,11 @@ Cada push a las ramas `main` o `desarrollo` dispara `.github/workflows/deploy.ym
 1. Clona el código del repo.
 2. Instala Node.js 24 y las dependencias de `package.json` (`npm ci`), incluida clasp en la versión fija del `package.json`.
 3. Corre ESLint (`npm run lint`). Si hay errores, aborta.
-4. Restaura las credenciales de clasp y el `.clasp.json` desde los GitHub Secrets.
-5. Lee el logo que el proyecto ya tiene en Apps Script (`clasp pull`) y restaura el código del repo.
-6. Genera `src/appsscript.json` a partir de `src/appsscript.template.json`, **conservando el logo leído del paso anterior**. Si el proyecto no tiene logo propio o falla la lectura, usa el logo de fallback.
-7. Ejecuta `clasp push --force` contra el proyecto Apps Script.
+4. Corre en Node los tests de `src/Tests.gs` (`npm test`). Si alguno falla, aborta. La carpeta `tests/` está fuera de `src/` y no se sube a Apps Script.
+5. Restaura las credenciales de clasp y el `.clasp.json` desde los GitHub Secrets.
+6. Lee el logo que el proyecto ya tiene en Apps Script (`clasp pull`) y restaura el código del repo.
+7. Genera `src/appsscript.json` a partir de `src/appsscript.template.json`, **conservando el logo leído del paso anterior**. Si el proyecto no tiene logo propio o falla la lectura, usa el logo de fallback.
+8. Ejecuta `clasp push --force` contra el proyecto Apps Script.
 
 Si cualquiera de los pasos falla, el workflow queda en rojo y Apps Script conserva la versión anterior. Los cambios llegan al editor web únicamente cuando el workflow termina en verde.
 
