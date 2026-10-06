@@ -1,0 +1,11 @@
+{
+  "asunto": "Solicitud caso 4821",
+  "esperado": {
+    "numeroCaso": "4821",
+    "servicioDesplegar": "https://papi.ejemplo.com/osi/api/proveedores/Providers/v1.0.0/provider/institucionesPermitidas",
+    "correoSolicitante": "usuario.solicitante@ejemplo.com",
+    "driveDocumentacion": "https://docs.google.com/document/d/1EjemploManualDespliegue0000abcd/edit\nhttps://drive.google.com/drive/folders/1EjemploCarpetaEntradas000abcd",
+    "repositorio": "",
+    "ambienteExtraido": "Producción"
+  }
+}

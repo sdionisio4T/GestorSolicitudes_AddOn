@@ -1,0 +1,57 @@
+Buen día.
+
+Tenemos una nueva solicitud para el equipo de desarrollo del siguiente correo:usuario.solicitante@ejemplo.com
+
+.
+El caso asignado con numero 4821 contiene la siguiente información:
+
+Correo para entrega de credenciales
+usuario existente
+Aprobación arquitectura (Acta o fecha en que fue aprobado en el comité de arquitectura o número de concepto)
+N/A
+Nombre del servicio a desplegar
+https://papi.ejemplo.com/osi/api/proveedores/Providers/v1.0.0/provider/institucionesPermitidas
+Documentación API OpenAPI -Swagger- WSO2
+https://app.swaggerhub.com/apis/Ejemplo1/proveedores-api/V1.0.5
+El despliegue contiene suscripción a un usuario en WSO2?
+Sí
+Aprobación arquitectura (Acta o fecha en que fue aprobado en el comité de arquitectura o número de concepto) donde se aprueba el componente de WSO2
+N/A
+URL del Manual de Despliegue WSO2
+https://docs.google.com/document/d/1EjemploManualDespliegue0000abcd/edit
+Descripción corta de la justificación de consumo
+se requiere consumir esta nueva capacidad desde la aplicación SistemaX y el usuario USUARIOX01 para realizar el respectivo soporte en producción
+URL del serviceProfiler WSO2
+https://docs.google.com/document/d/1EjemploManualDespliegue0000abcd/edit
+Seleccione el tipo de artefacto que se va suscribir
+Api Manager
+Apis a consumir en WSO2 Inventario Arquitectura
+provider institucionesPermitidas
+Proyecto, Evolutivo o Cambio al que pertenece el servicio WSO2
+PROYECTO EJEMPLO A-100
+Repositorio Github de código fuente de la versión a desplegar WSO2
+N/A
+Tipo de artefactos a desplegar
+ApiManager
+Nombre del usuario del sistema de información que consume
+USUARIOX00 y USUARIOX01
+URL de Documento Entradas y salidas WSO2
+https://drive.google.com/drive/folders/1EjemploCarpetaEntradas000abcd
+Código del sistema de información que consume
+SII000000000
+Nombre del sistema de información que consume
+SISTEMAX USUARIOX00
+Describa claramente en que consiste el cambio
+se requiere promover a producción la capacidad institucionesPermitidas la cual debe estar dentro de la api de proveedores lo anterior se puede corroborar revisando preproducción
+Ambiente de creación plataforma WSO2
+Produccion
+Ambiente a desplegar
+Producción
+
+
+Para dar respuesta puedes hacer clic aquí
+
+Gracias.
+
+Cordialmente;
+Dirección de Arquitectura

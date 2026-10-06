@@ -1,8 +1,0 @@
-Buenos días.
-El caso asignado con numero 5120 requiere despliegue.
-Nombre del servicio a desplegar: ESB-Citas
-Ambiente a desplegar: Preproducción
-Documentación: https://drive.google.com/drive/folders/1EjemploCarpetaCitas_abcdefghij
-Repositorio: https://github.com/ejemplo/esb-citas
-Del siguiente correo: usuario@ejemplo.com
-Gracias.
