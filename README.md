@@ -33,7 +33,8 @@ Todo el código del add-on vive en `src/`. Los archivos `.gs` de Apps Script com
 | `src/Reintentos.gs` | Reintentos en segundo plano vía triggers programados. |
 | `src/EstadoCard.gs` | Tarjeta de estado de envíos y lista de envíos abiertos. |
 | `src/EditarSolicitud.gs` | Editor de solicitudes ya guardadas (in-place, sin duplicar filas). |
-| `src/Tests.gs` | Tests unitarios de helpers puros (regex, columnas, parsing). |
+| `src/Tests.gs` | Tests unitarios de helpers puros (regex, columnas, parsing). Corren en Apps Script (`correrTodosLosTests`) y en Node (`npm test`). |
+| `src/Integracion.gs` | Prueba de integración real del envío (`correrIntegracion`) contra un Sheet y una carpeta de prueba. Se corre a mano en Apps Script. |
 | `src/appsscript.template.json` | Plantilla del manifiesto del add-on: scopes OAuth, triggers, dominios permitidos, y una URL de logo por defecto (gstatic Gmail). Está en git y es la fuente de verdad. |
 | `src/appsscript.json` | Manifiesto real que consume clasp. **No está en git** (lo genera `npm run setup` a partir de la plantilla, reemplazando la URL del logo por el que el usuario sube a su Drive). |
 
@@ -44,6 +45,7 @@ Además del código en `src/`, el repositorio contiene:
 | Ubicación | Descripción |
 |---|---|
 | `src/` | Código fuente del add-on (`.gs` + `appsscript.template.json`). `clasp` toma esta carpeta como raíz de push (ver `rootDir` en `.clasp.json`). |
+| `tests/` | Tests en Node (`npm test`): `cargar-gs.js` carga los `.gs` de `src/` con dobles mínimos de Apps Script, y `fixtures/` guarda correos de solicitud anonimizados con lo que se espera extraer de cada uno. No se sube a Apps Script. |
 | `scripts/setup.js` | Orquestador de `npm run setup`: crea la carpeta del proyecto en Drive del usuario, sube el logo, marca el logo como público, genera `src/appsscript.json` a partir de la plantilla, crea el proyecto Apps Script dentro de la carpeta y sube el código. |
 | `scripts/generar-manifest.js` | Lo usa el workflow de deploy: genera `src/appsscript.json` desde la plantilla conservando el logo que el proyecto ya tiene en Apps Script. |
 | `scripts/finish-login.sh` | Helper para completar `clasp login` desde Codespaces cuando el redirect a `localhost` falla. Se invoca con `npm run login:finish`. Ver sección **Login OAuth desde Codespaces**. |
@@ -51,11 +53,11 @@ Además del código en `src/`, el repositorio contiene:
 | `docs/` | Documentación interna del mantenedor (contexto del proyecto, roadmap, aviso de privacidad). No se versiona en git ni se sube a Apps Script. |
 | `assets/` | Assets estáticos del proyecto (por ejemplo el ícono `icon_96x96.png`). El logo servido por el add-on en runtime lo sube el `npm run setup` desde acá a la carpeta Drive del usuario, y como fallback (para instalaciones manuales o si la subida falla) la plantilla apunta a un ícono público de Gmail alojado en gstatic. |
 | `secrets/` | Plantillas de `CLASP_JSON` y `CLASPRC_JSON`. Cada colaborador reemplaza los placeholders con sus valores reales y las usa para dos cosas: (1) `CLASP_JSON` se copia como `.clasp.json` local para trabajar con clasp desde la máquina, y (2) ambos archivos se pegan como secrets del repo en GitHub Actions para que el workflow de deploy pueda hacer `clasp push`. |
-| `.github/workflows/deploy.yml` | Workflow de GitHub Actions que lintea, genera el manifest desde la plantilla y sube el código a Apps Script en cada push a `main` o `desarrollo`. |
+| `.github/workflows/deploy.yml` | Workflow de GitHub Actions que lintea, corre los tests, genera el manifest desde la plantilla y sube el código a Apps Script en cada push a `main` o `desarrollo`. |
 | `.claspignore` | Lista de archivos que `clasp push` no debe subir al editor web de Apps Script. Versionada porque es política común del proyecto. |
 | `.eslintrc.js` | Configuración de ESLint con reglas de calidad de código y de seguridad (`eslint-plugin-security`) para los archivos `.gs`. |
 | `.gitignore` | Archivos y carpetas que git ignora (incluye `.clasp.json`, `src/appsscript.json` generado, dependencias de npm, `docs/`, entre otros). |
-| `package.json` y `package-lock.json` | Declaración y versiones exactas de dependencias de npm. El proyecto solo usa npm para lintear en local y en CI. El add-on no corre en Node. |
+| `package.json` y `package-lock.json` | Declaración y versiones exactas de dependencias de npm (clasp va con versión fija). El proyecto usa npm para lintear, correr los tests y subir con clasp, en local y en CI. El add-on no corre en Node. |
 | `README.md` | Este archivo. |
 
 ## Scopes OAuth
@@ -314,7 +316,7 @@ El correo que aparece en la advertencia como "desarrollador" es simplemente la c
 Si por alguna razón no puedes usar `npm run setup` (por ejemplo, política del PC que bloquea Node y no quieres usar Codespaces), puedes armar el proyecto a mano copiando y pegando el código en el editor web. Es más lento y cada actualización hay que repetirla a mano, así que solo conviene para pruebas puntuales:
 
 1. Entra a [script.google.com](https://script.google.com) → **Proyecto nuevo** y ponle el nombre "Gestor de Solicitudes".
-2. Crea un archivo de script por cada `.gs` de la carpeta `src/` (botón **+** junto a "Archivos" → **Secuencia de comandos**). El nombre va sin la extensión: `Main`, `Config`, `Cards`, etc. Copia y pega en cada uno el contenido del archivo correspondiente. `Tests.gs` es opcional. El archivo `Código.gs` que trae el proyecto nuevo puedes borrarlo.
+2. Crea un archivo de script por cada `.gs` de la carpeta `src/` (botón **+** junto a "Archivos" → **Secuencia de comandos**). El nombre va sin la extensión: `Main`, `Config`, `Cards`, etc. Copia y pega en cada uno el contenido del archivo correspondiente. `Tests.gs` e `Integracion.gs` son opcionales. El archivo `Código.gs` que trae el proyecto nuevo puedes borrarlo.
 3. Muestra el manifest: **Configuración del proyecto** (engranaje) → activa **"Mostrar el archivo de manifiesto appsscript.json en el editor"**.
 4. Abre `appsscript.json` en el editor y **reemplaza todo su contenido** con el de `src/appsscript.template.json`. Sin este paso el add-on no funciona: el manifest por defecto no trae los scopes OAuth, los triggers de Gmail y Sheets ni la sección `addOns`.
 5. Sigue [Instalar el add-on en Gmail](#instalar-el-add-on-en-gmail) desde el paso 2 (**Implementar → Implementaciones de prueba**).
@@ -483,3 +485,21 @@ Antes de commitear, correr el linter evita que el workflow falle en el paso 3:
 ```bash
 npm run lint
 ```
+
+### Pruebas
+
+Hay tres niveles:
+
+1. **Tests en Node** (automáticos): corren en el workflow antes de cada push a Apps Script. Para correrlos en local:
+
+   ```bash
+   npm test
+   ```
+
+   Incluyen los tests de `src/Tests.gs` y los correos de ejemplo de `tests/fixtures/`. Para agregar un correo: guardar el cuerpo en `tests/fixtures/<nombre>.txt` y en `tests/fixtures/<nombre>.json` el asunto y los valores esperados (ver los existentes). Los correos van anonimizados.
+
+2. **Integración real** (a mano, en Apps Script): `correrIntegracion()` en `src/Integracion.gs` hace un envío mixto ESB + API contra recursos de prueba, revisa filas, carpetas, copias y la columna de JSON, y al final borra lo que creó. Requiere en Propiedades del script: `TEST_SHEET_ID`, `TEST_SHEET_TAB`, `TEST_CARPETA_ID` (destino de las copias) y `TEST_ORIGEN_URL` (una carpeta pequeña con al menos un `.json`, fuera de `TEST_CARPETA_ID`). Correrla después de cada cambio en el envío o la copia.
+
+3. **Pruebas de interfaz** (a mano, en Gmail y Sheets): los clics en las tarjetas no se pueden automatizar; se siguen con un checklist interno del mantenedor.
+
+La versión del add-on está en `VERSION_APP` (`src/Config.gs`) y se ve en el menú principal, en Diagnóstico y al pie de Ayuda. Se sube a mano en el mismo commit del cambio (`MAYOR.MENOR.PARCHE`).
