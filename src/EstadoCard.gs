@@ -600,11 +600,6 @@ function buildListaEnviosEnCursoCard(opts) {
         )
     );
 
-  // El índice de JSON solo se ofrece en el panel de Sheets.
-  if (opts.conIndice) {
-    card.addSection(seccionIndiceJson_());
-  }
-
   if (enCurso.length === 0 && terminados.length === 0) {
     card.addSection(
       CardService.newCardSection()
@@ -764,7 +759,7 @@ function onListarEnviosEnCurso(e) {
   return CardService.newActionResponseBuilder()
     .setNavigation(
       CardService.newNavigation()
-        .pushCard(buildListaEnviosEnCursoCard({ messageId: messageId, conIndice: esHostSheets_(e) }))
+        .pushCard(buildListaEnviosEnCursoCard({ messageId: messageId }))
     )
     .build();
 }
@@ -779,7 +774,7 @@ function onActualizarListaEnvios(e) {
   return CardService.newActionResponseBuilder()
     .setNavigation(
       CardService.newNavigation()
-        .updateCard(buildListaEnviosEnCursoCard({ messageId: messageId, conIndice: esHostSheets_(e) }))
+        .updateCard(buildListaEnviosEnCursoCard({ messageId: messageId }))
     )
     .setNotification(
       CardService.newNotification().setText('Lista actualizada.')
@@ -956,7 +951,7 @@ function onDescartarPendiente(e) {
     )
     .setNavigation(
       CardService.newNavigation()
-        .updateCard(buildListaEnviosEnCursoCard({ messageId: messageId, conIndice: esHostSheets_(e) }))
+        .updateCard(buildListaEnviosEnCursoCard({ messageId: messageId }))
     )
     .build();
 }
@@ -1022,7 +1017,7 @@ function onDescartarEnCurso(e) {
     )
     .setNavigation(
       CardService.newNavigation()
-        .updateCard(buildListaEnviosEnCursoCard({ messageId: messageId, conIndice: esHostSheets_(e) }))
+        .updateCard(buildListaEnviosEnCursoCard({ messageId: messageId }))
     )
     .build();
 }
@@ -1073,7 +1068,7 @@ function onDescartarTodosPendientes(e) {
     .setNotification(CardService.newNotification().setText(msg))
     .setNavigation(
       CardService.newNavigation()
-        .updateCard(buildListaEnviosEnCursoCard({ messageId: messageId, conIndice: esHostSheets_(e) }))
+        .updateCard(buildListaEnviosEnCursoCard({ messageId: messageId }))
     )
     .build();
 }

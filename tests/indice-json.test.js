@@ -133,3 +133,91 @@ test('trocear y unir devuelve el mismo texto', () => {
   assert.strictEqual(trozos.length, 5);
   assert.strictEqual(trozos.join(''), texto);
 });
+
+test('plan de la columna N: solo cruces seguros, ambiguas aparte', () => {
+  const filasSheet = [
+    { fila: 2, caso: '9300', servicio: 'Pagos' },
+    { fila: 3, caso: '9300', servicio: 'Pagos' },
+    { fila: 4, caso: '9100', servicio: 'Pagos' },
+    { fila: 5, caso: '9000', servicio: 'Pagos' }
+  ];
+  const indice = [
+    { url: 'u1', cruce: 'por carpeta', numerosFila: [3, 2] },
+    { url: 'u2', cruce: 'por ruta', numerosFila: [2] },
+    { url: 'u1', cruce: 'por carpeta', numerosFila: [2] },
+    { url: 'u3', cruce: 'ambiguo', numerosFila: [4] },
+    { url: 'u4', cruce: 'sin fila', numerosFila: [] }
+  ];
+  const plan = plano(gs.indicePlanColumnaN_(indice, filasSheet));
+  assert.deepStrictEqual(plan.objetivos.map((o) => [o.fila, o.urls]), [[2, ['u1', 'u2']], [3, ['u1']]]);
+  assert.strictEqual(plan.ambiguas, 1);
+  assert.strictEqual(plan.sinJson, 1);
+});
+
+test('texto de la columna N: una URL por linea con tope', () => {
+  assert.strictEqual(gs.indiceTextoColumnaN_(['a', 'b']), 'a\nb');
+  const muchas = ['1', '2', '3', '4', '5', '6', '7', '8'];
+  const texto = gs.indiceTextoColumnaN_(muchas);
+  assert.strictEqual(texto.split('\n').length, 7);
+  assert.match(texto, /y 2 más en la pestaña Índice JSON$/);
+});
+
+// Sheet en memoria: filas como arreglos [caso, servicio, ..., N].
+function hojaFalsa(filas) {
+  const escritas = {};
+  const N = gs.SHEET_COLS.ARCHIVOS_JSON;
+  return {
+    escritas,
+    hoja: {
+      getLastRow: () => filas.length,
+      getRange(fila, col, nFilas = 1, nCols = 1) {
+        return {
+          getValues: () => Array.from({ length: nFilas }, (_, i) =>
+            Array.from({ length: nCols }, (_, j) => filas[fila - 1 + i][col - 1 + j])),
+          getValue: () => filas[fila - 1][col - 1],
+          setValue() { return this; },
+          setFontWeight() { return this; },
+          setRichTextValues(valores) {
+            assert.strictEqual(col, N);
+            valores.forEach((v, i) => { escritas[fila + i] = v[0].getText(); });
+          }
+        };
+      }
+    }
+  };
+}
+
+test('bloque de la columna N: verifica cada fila y no pisa lo que hay', () => {
+  const N = gs.SHEET_COLS.ARCHIVOS_JSON;
+  const fila = (caso, servicio, n) => {
+    const f = new Array(N).fill('');
+    f[0] = caso; f[1] = servicio; f[N - 1] = n;
+    return f;
+  };
+  const datos = [
+    fila('Número de caso', 'Servicio', 'Archivos JSON'),
+    fila(9300, 'Pagos', ''),
+    fila(9300, 'Pagos', 'https://ya/estaba'),
+    fila(9215, 'Pagos', ''),
+    fila(9100, 'Pagos', '')
+  ];
+  const { hoja, escritas } = hojaFalsa(datos);
+  gs.obtenerSheetTab = () => 'Solicitudes';
+  gs.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
+  gs.SpreadsheetApp.flush = () => {};
+  const ss = { getSheetByName: () => hoja };
+
+  const cuenta = { llenadas: 0, yaTenian: 0, cambiaron: 0 };
+  const bloque = [
+    { fila: 2, caso: '9300', servicio: 'Pagos', urls: ['https://a'] },
+    { fila: 3, caso: '9300', servicio: 'Pagos', urls: ['https://b'] },
+    // La fila 4 ahora es otro caso: alguien ordeno el Sheet.
+    { fila: 4, caso: '9999', servicio: 'Pagos', urls: ['https://c'] },
+    { fila: 5, caso: '9100', servicio: 'Pagos', urls: ['https://d', 'https://e'] },
+    // Ya no existe: el Sheet tiene 5 filas.
+    { fila: 6, caso: '9000', servicio: 'Pagos', urls: ['https://f'] }
+  ];
+  assert.strictEqual(gs.indiceEscribirBloqueN_(ss, bloque, cuenta), true);
+  assert.deepStrictEqual(plano(cuenta), { llenadas: 2, yaTenian: 1, cambiaron: 2 });
+  assert.deepStrictEqual(plano(escritas), { 2: 'https://a', 5: 'https://d\nhttps://e' });
+});

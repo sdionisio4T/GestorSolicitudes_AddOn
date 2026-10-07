@@ -290,7 +290,51 @@ function onHomepageSheets(e) {
     return [buildCardConfigApropiada(motivo)];
   }
 
-  return [buildListaEnviosEnCursoCard({ conIndice: true })];
+  return [buildPanelSheetsCard_()];
+}
+
+/**
+ * Menú del panel en Sheets: índice de JSON y envíos, cada uno en su
+ * propia tarjeta.
+ */
+function buildPanelSheetsCard_() {
+  var enCurso = listarTodosSobres().length;
+  var terminados = listarTodosTerminados().length;
+
+  var card = CardService.newCardBuilder()
+    .setHeader(
+      CardService.newCardHeader()
+        .setTitle('Gestor de Solicitudes')
+        .setSubtitle('V' + VERSION_APP)
+    );
+
+  card.addSection(
+    CardService.newCardSection()
+      .setHeader('🗂️ Índice de JSON')
+      .addWidget(CardService.newTextParagraph().setText(textoCortoIndiceJson_()))
+      .addWidget(
+        CardService.newTextButton()
+          .setText('🗂️ Índice de JSON')
+          .setOnClickAction(CardService.newAction().setFunctionName('onAbrirIndiceJson'))
+          .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+          .setBackgroundColor('#1a73e8')
+      )
+  );
+
+  card.addSection(
+    CardService.newCardSection()
+      .setHeader('📋 Envíos')
+      .addWidget(CardService.newTextParagraph().setText(
+        enCurso + ' en curso · ' + terminados + ' esperando acceso'
+      ))
+      .addWidget(
+        CardService.newTextButton()
+          .setText('📋 Ver envíos')
+          .setOnClickAction(CardService.newAction().setFunctionName('onListarEnviosEnCurso'))
+      )
+  );
+
+  return card.build();
 }
 
 function onGmailMessageOpen(e) {
