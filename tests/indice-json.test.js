@@ -221,3 +221,59 @@ test('bloque de la columna N: verifica cada fila y no pisa lo que hay', () => {
   assert.deepStrictEqual(plano(cuenta), { llenadas: 2, yaTenian: 1, cambiaron: 2 });
   assert.deepStrictEqual(plano(escritas), { 2: 'https://a', 5: 'https://d\nhttps://e' });
 });
+
+// Originales: filas sin copia en nuestra raiz.
+function escenarioOriginales() {
+  const datos = escenario();
+  const filas = [
+    // Con copia por link: no va a originales aunque tenga otro link en D.
+    { fila: 2, caso: '9300', servicio: 'Pagos', componente: 'ESB', ambiente: 'Producción', estado: 'APROBADO', ids: [ID('c1'), ID('origA')] },
+    // Con copia por ruta (Pagos/9215 existe): tampoco.
+    { fila: 3, caso: '9215', servicio: 'Pagos', componente: 'ESB', ambiente: 'Pruebas', estado: 'PENDIENTE', ids: [ID('origB')] },
+    // Sin copia: dos filas con el mismo original (filas independientes).
+    { fila: 4, caso: '8000', servicio: 'Viejo', componente: 'ESB', ambiente: 'Producción', estado: 'APROBADO', ids: [ID('origC')] },
+    { fila: 5, caso: '8000', servicio: 'Viejo', componente: 'EI', ambiente: 'Producción', estado: 'PENDIENTE', ids: [ID('origC')] },
+    // Sin copia, original sin acceso.
+    { fila: 6, caso: '7000', servicio: 'Otro', componente: 'ESB', ambiente: 'Pruebas', estado: 'PENDIENTE', ids: [ID('origX')] },
+    // Sin copia, link directo a un .json suelto.
+    { fila: 7, caso: '6000', servicio: 'Suelto', componente: 'ESB', ambiente: 'Pruebas', estado: 'PENDIENTE', ids: [ID('jsonD')] }
+  ];
+  return { datos, filas };
+}
+
+test('originales: solo se revisan links de filas sin copia, una vez por link', () => {
+  const { datos, filas } = escenarioOriginales();
+  const rev = gs.indiceOriginalesPorRevisar_(datos, filas);
+  assert.deepStrictEqual(plano(rev.ids), [ID('origC'), ID('origX'), ID('jsonD')]);
+  assert.deepStrictEqual(plano(rev.porId[ID('origC')].map((f) => f.fila)), [4, 5]);
+});
+
+test('originales: JSON en subcarpetas y sueltos se cruzan con sus filas', () => {
+  const { datos, filas } = escenarioOriginales();
+  datos.originales = {
+    estados: { [ID('origC')]: 'carpeta', [ID('origX')]: 'sin_acceso', [ID('jsonD')]: 'json' },
+    carpetas: { [ID('origC')]: ['Entrega 8000', null], [ID('sub')]: ['Config', ID('origC')] },
+    jsons: [[ID('jo1'), 'orig.json', ID('sub'), ''], [ID('jsonD'), 'suelto.json', '', '']]
+  };
+  const res = plano(gs.indiceArmarFilas_(datos, filas));
+  const o1 = res.find((r) => r.archivo === 'orig.json');
+  assert.strictEqual(o1.origen, 'Original');
+  assert.strictEqual(o1.cruce, 'por link original');
+  assert.strictEqual(o1.filas, '4, 5');
+  assert.strictEqual(o1.carpetaEnvio, 'Entrega 8000');
+  assert.strictEqual(o1.resto, 'Config');
+  assert.strictEqual(o1.rama, '');
+  const o2 = res.find((r) => r.archivo === 'suelto.json' && r.origen === 'Original');
+  assert.strictEqual(o2.filas, '7');
+  assert.ok(res.filter((r) => r.origen === 'Copia').length > 0);
+
+  const sinAcceso = plano(gs.indiceFilasSinAcceso_(datos, filas));
+  assert.deepStrictEqual(sinAcceso.map((s) => s.fila), [6]);
+
+  const marcadas = {};
+  sinAcceso.forEach((s) => { marcadas[s.fila] = true; });
+  const plan = plano(gs.indicePlanColumnaN_(res, filas, marcadas));
+  assert.deepStrictEqual(plan.objetivos.map((o) => o.fila), [2, 3, 4, 5, 7]);
+  assert.strictEqual(plan.sinAcceso, 1);
+  assert.strictEqual(plan.sinJson, 0);
+});

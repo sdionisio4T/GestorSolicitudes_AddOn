@@ -12,14 +12,20 @@
  * programa la siguiente. Mientras corre, la pestaña "Índice JSON" muestra
  * el avance. Si el activador no corre, el panel ofrece avanzar desde ahí.
  *
+ * Para las filas sin copia en nuestra raíz, abre los originales de sus
+ * columnas C y D (una carpeta por consulta) y registra sus .json con origen
+ * "Original"; los links sin acceso van a la pestaña "Índice JSON (sin
+ * acceso)". Se enlaza, nunca se copia.
+ *
  * Al final llena la columna N (Archivos JSON) de la pestaña de solicitudes,
- * solo en filas con la N vacía y con un cruce seguro (por carpeta o por
- * ruta), revisando cada fila justo antes de escribir.
+ * solo en filas con la N vacía y con un cruce seguro (por carpeta, por ruta
+ * o por link original), revisando cada fila justo antes de escribir.
  */
 
 var INDICE_CONFIG = {
   PESTANA: 'Índice JSON',
   PESTANA_AVANCE: 'Índice JSON (avance)',
+  PESTANA_SIN_ACCESO: 'Índice JSON (sin acceso)',
   // Una parte del activador: 5 min, igual que los reintentos de copia (la
   // ejecución tiene 6). Y una parte de respaldo desde el panel, que solo
   // se usa si el activador no corre (una acción de tarjeta tiene 30 s).
@@ -48,9 +54,13 @@ var INDICE_CONFIG = {
 };
 
 var INDICE_ENCABEZADOS = [
-  'Servicio', 'Caso', 'Carpeta del envío', 'Rama', 'Ruta dentro del caso',
+  'Servicio', 'Caso', 'Origen', 'Carpeta del envío', 'Rama', 'Ruta dentro del caso',
   'Archivo', 'Modificado', 'Ambiente', 'Componente', 'Estado', 'Fila(s)',
   'Cruce', 'URL'
+];
+
+var INDICE_ENCABEZADOS_SIN_ACCESO = [
+  'Fila', 'Caso', 'Servicio', 'Componente', 'Estado', 'Link sin acceso'
 ];
 
 var INDICE_REGEX_URL_DRIVE = /https?:\/\/(?:drive|docs)\.google\.com\/[^\s<>"]+/gi;
@@ -123,12 +133,171 @@ function indiceUnicos_(lista) {
 }
 
 /**
+ * Clave de cruce por ruta de una fila: rama (por su componente), servicio
+ * limpio y caso. Es la misma forma en que el envío arma sus carpetas.
+ */
+function indiceClaveFila_(f) {
+  var rama = esComponenteAPIM(String(f.componente || '').trim()) ? 'APIM' : 'General';
+  return rama + '|' + indiceLimpiarServicio_(f.servicio) + '|' + String(f.caso).trim();
+}
+
+/**
+ * Carpetas de envío de nuestra raíz por clave de ruta, tengan o no .json.
+ * Sirve para saber si una fila tiene copia y para detectar Caso_N.
+ */
+function indiceEnviosPorClave_(datos) {
+  var envios = {};
+  Object.keys(datos.carpetas).forEach(function(id) {
+    var cadena = indiceCadena_(id, datos.raizId, datos.carpetas);
+    if (!cadena) return;
+    var ruta = indiceClasificarRuta_(cadena.map(function(c) { return c.nombre; }));
+    if (!ruta || ruta.resto !== '') return;
+    var clave = ruta.rama + '|' + ruta.servicio + '|' + ruta.caso;
+    if (!envios[clave]) envios[clave] = {};
+    envios[clave][ruta.carpetaEnvio] = true;
+  });
+  return envios;
+}
+
+/**
+ * Links a originales que hay que revisar: los de las columnas C y D de las
+ * filas que NO tienen copia en nuestra raíz (ni por su link ni por ruta).
+ * Una fila con copia nunca va a sus originales.
+ *
+ * Devuelve { ids: [id], porId: { id: [filas] } }. El mismo link en varias
+ * filas se revisa una sola vez y el resultado va a todas.
+ */
+function indiceOriginalesPorRevisar_(datos, filasSheet) {
+  var envios = indiceEnviosPorClave_(datos);
+  var propios = {};
+  propios[datos.raizId] = true;
+  (datos.jsons || []).forEach(function(j) { propios[j[0]] = true; });
+
+  var ids = [];
+  var porId = {};
+  filasSheet.forEach(function(f) {
+    var links = f.ids || [];
+    var conCopia = links.some(function(id) { return datos.carpetas[id] || id === datos.raizId; }) ||
+      !!envios[indiceClaveFila_(f)];
+    if (conCopia) return;
+    links.forEach(function(id) {
+      if (propios[id] || datos.carpetas[id]) return;
+      if (!porId[id]) {
+        porId[id] = [];
+        ids.push(id);
+      }
+      porId[id].push(f);
+    });
+  });
+  return { ids: ids, porId: porId };
+}
+
+/**
+ * De qué links originales sale un .json encontrado en originales: el link
+ * al propio archivo y las carpetas enlazadas que lo contienen. También
+ * devuelve la más cercana y la ruta desde ella.
+ *
+ * O: { estados: { id: 'carpeta' | 'json' | 'sin_acceso' | 'otro' },
+ *      carpetas: { id: [nombre, padre o null] } }
+ */
+function indiceOrigenDeJson_(j, O) {
+  var origenes = [];
+  var ruta = [];
+  var cercano = null;
+  if (O.estados[j[0]] === 'json') origenes.push(j[0]);
+  var p = j[2];
+  var vueltas = 0;
+  while (p && O.carpetas[p] && vueltas < 60) {
+    if (O.estados[p] === 'carpeta') {
+      origenes.push(p);
+      if (!cercano) cercano = p;
+    }
+    if (!cercano) ruta.unshift(O.carpetas[p][0]);
+    p = O.carpetas[p][1];
+    vueltas++;
+  }
+  return { origenes: origenes, cercano: cercano, ruta: ruta };
+}
+
+/**
+ * Filas del índice para los .json encontrados en originales. Servicio,
+ * caso, ambiente, componente y estado salen de las filas que los enlazan.
+ */
+function indiceArmarFilasOriginales_(datos, filasSheet) {
+  var O = datos.originales;
+  var rev = indiceOriginalesPorRevisar_(datos, filasSheet);
+  var salida = [];
+  (O.jsons || []).forEach(function(j) {
+    var info = indiceOrigenDeJson_(j, O);
+    var vistas = {};
+    var filas = [];
+    info.origenes.forEach(function(o) {
+      (rev.porId[o] || []).forEach(function(f) {
+        if (vistas[f.fila]) return;
+        vistas[f.fila] = true;
+        filas.push(f);
+      });
+    });
+    if (filas.length === 0) return;
+    filas.sort(function(a, b) { return a.fila - b.fila; });
+
+    salida.push({
+      servicio: indiceUnicos_(filas.map(function(f) { return f.servicio; })).join(' / ') || '(sin servicio)',
+      caso: indiceUnicos_(filas.map(function(f) { return f.caso; })).join(' / '),
+      carpetaEnvio: info.cercano ? O.carpetas[info.cercano][0] : '',
+      rama: '',
+      resto: info.ruta.join('/'),
+      archivo: j[1],
+      id: j[0],
+      url: 'https://drive.google.com/file/d/' + j[0] + '/view',
+      modificado: j[3] || '',
+      ambiente: indiceUnicos_(filas.map(function(f) { return f.ambiente; })).join(' / '),
+      componente: indiceUnicos_(filas.map(function(f) { return f.componente; })).join(' / '),
+      estado: indiceUnicos_(filas.map(function(f) { return f.estado; })).join(' / '),
+      filas: filas.map(function(f) { return f.fila; }).join(', '),
+      numerosFila: filas.map(function(f) { return f.fila; }),
+      cruce: 'por link original',
+      origen: 'Original'
+    });
+  });
+  return salida;
+}
+
+/**
+ * Filas sin copia con algún link original al que no hay acceso (o que fue
+ * borrado), una entrada por fila y link, ordenadas por fila.
+ */
+function indiceFilasSinAcceso_(datos, filasSheet) {
+  var O = datos.originales;
+  if (!O) return [];
+  var rev = indiceOriginalesPorRevisar_(datos, filasSheet);
+  var lista = [];
+  rev.ids.forEach(function(id) {
+    if (O.estados[id] !== 'sin_acceso') return;
+    rev.porId[id].forEach(function(f) {
+      lista.push({
+        fila: f.fila,
+        caso: f.caso,
+        servicio: f.servicio,
+        componente: f.componente,
+        estado: f.estado,
+        id: id,
+        url: 'https://drive.google.com/open?id=' + id
+      });
+    });
+  });
+  lista.sort(function(a, b) { return a.fila - b.fila; });
+  return lista;
+}
+
+/**
  * Cruza los .json encontrados con las filas del Sheet y devuelve las filas
  * del índice, ordenadas por servicio y, dentro del servicio, del caso más
  * reciente al más viejo.
  *
  * datos: { raizId, carpetas: { id: [nombre, padre] },
- *          jsons: [[id, nombre, padre, modificadoIso]] }
+ *          jsons: [[id, nombre, padre, modificadoIso]],
+ *          originales (opcional): { estados, carpetas, jsons } }
  * filasSheet: [{ fila, caso, servicio, componente, ambiente, estado, ids }]
  *
  * Reglas de cruce:
@@ -138,6 +307,8 @@ function indiceUnicos_(lista) {
  *   ambiguo:     por ruta, pero el caso tiene varias carpetas de envío
  *                (Caso, Caso_2...).
  *   sin fila:    ninguna fila coincide; el .json queda en el índice igual.
+ *   por link original: el .json está en un original enlazado por una fila
+ *                que no tiene copia en nuestra raíz.
  * Cada fila del Sheet se cruza por su cuenta: un mismo .json puede quedar
  * asociado a varias filas.
  */
@@ -152,23 +323,12 @@ function indiceArmarFilas_(datos, filasSheet) {
       if (!filasPorCarpeta[id]) filasPorCarpeta[id] = [];
       filasPorCarpeta[id].push(f);
     });
-    var rama = esComponenteAPIM(String(f.componente || '').trim()) ? 'APIM' : 'General';
-    var clave = rama + '|' + indiceLimpiarServicio_(f.servicio) + '|' + String(f.caso).trim();
+    var clave = indiceClaveFila_(f);
     if (!filasPorRuta[clave]) filasPorRuta[clave] = [];
     filasPorRuta[clave].push(f);
   });
 
-  // Carpetas de envío por caso, tengan o no .json, para detectar Caso_N.
-  var enviosPorClave = {};
-  Object.keys(carpetas).forEach(function(id) {
-    var cadena = indiceCadena_(id, datos.raizId, carpetas);
-    if (!cadena) return;
-    var ruta = indiceClasificarRuta_(cadena.map(function(c) { return c.nombre; }));
-    if (!ruta || ruta.resto !== '') return;
-    var clave = ruta.rama + '|' + ruta.servicio + '|' + ruta.caso;
-    if (!enviosPorClave[clave]) enviosPorClave[clave] = {};
-    enviosPorClave[clave][ruta.carpetaEnvio] = true;
-  });
+  var enviosPorClave = indiceEnviosPorClave_(datos);
 
   var salida = [];
   datos.jsons.forEach(function(j) {
@@ -211,9 +371,14 @@ function indiceArmarFilas_(datos, filasSheet) {
       estado: indiceUnicos_(filas.map(function(f) { return f.estado; })).join(' / '),
       filas: filas.map(function(f) { return f.fila; }).join(', '),
       numerosFila: filas.map(function(f) { return f.fila; }),
-      cruce: cruce
+      cruce: cruce,
+      origen: 'Copia'
     });
   });
+
+  if (datos.originales) {
+    indiceArmarFilasOriginales_(datos, filasSheet).forEach(function(f) { salida.push(f); });
+  }
 
   salida.sort(function(a, b) {
     var s = a.servicio.toLowerCase().localeCompare(b.servicio.toLowerCase());
@@ -254,15 +419,21 @@ function indiceIdsDeCelda_(rich) {
   return ids;
 }
 
+var INDICE_CRUCES_SEGUROS = ['por carpeta', 'por ruta', 'por link original'];
+
 /**
  * Decide qué filas reciben JSON en la columna N. Solo cuentan los cruces
- * "por carpeta" y "por ruta"; las filas que solo tienen cruces ambiguos se
- * dejan sin tocar. Si la N ya tiene algo se decide al escribir, no acá.
+ * seguros (por carpeta, por ruta o por link original); las filas que solo
+ * tienen cruces ambiguos se dejan sin tocar. Si la N ya tiene algo se
+ * decide al escribir, no acá.
  *
- * Devuelve { objetivos: [{ fila, caso, servicio, urls }], ambiguas, sinJson },
- * con los objetivos ordenados por número de fila.
+ * filasSinAcceso: { fila: true } de las filas con algún original sin acceso.
+ *
+ * Devuelve { objetivos: [{ fila, caso, servicio, urls }], ambiguas,
+ * sinAcceso, sinJson }, con los objetivos ordenados por número de fila.
  */
-function indicePlanColumnaN_(filasIndice, filasSheet) {
+function indicePlanColumnaN_(filasIndice, filasSheet, filasSinAcceso) {
+  filasSinAcceso = filasSinAcceso || {};
   var porFila = {};
   var ambiguas = {};
   filasIndice.forEach(function(f) {
@@ -271,18 +442,20 @@ function indicePlanColumnaN_(filasIndice, filasSheet) {
         ambiguas[n] = true;
         return;
       }
-      if (f.cruce !== 'por carpeta' && f.cruce !== 'por ruta') return;
+      if (INDICE_CRUCES_SEGUROS.indexOf(f.cruce) === -1) return;
       if (!porFila[n]) porFila[n] = [];
       if (porFila[n].indexOf(f.url) === -1) porFila[n].push(f.url);
     });
   });
 
-  var plan = { objetivos: [], ambiguas: 0, sinJson: 0 };
+  var plan = { objetivos: [], ambiguas: 0, sinAcceso: 0, sinJson: 0 };
   filasSheet.forEach(function(f) {
     if (porFila[f.fila]) {
       plan.objetivos.push({ fila: f.fila, caso: f.caso, servicio: f.servicio, urls: porFila[f.fila] });
     } else if (ambiguas[f.fila]) {
       plan.ambiguas++;
+    } else if (filasSinAcceso[f.fila]) {
+      plan.sinAcceso++;
     } else {
       plan.sinJson++;
     }
@@ -384,7 +557,12 @@ function leerEstadoIndiceJson_() {
 
 // ── Recorrido de Drive ────────────────────────────────────────────────
 
-function indiceListarHijos_(carpetaId, driveId) {
+/**
+ * Hijos de una carpeta, una carpeta por consulta. `driveId` es la unidad
+ * compartida de nuestra raíz; `todasLasUnidades` se usa para carpetas de
+ * otras personas, que pueden estar en cualquier unidad.
+ */
+function indiceListarHijos_(carpetaId, driveId, todasLasUnidades) {
   var params = {
     q: "'" + carpetaId + "' in parents and trashed = false",
     fields: 'nextPageToken,files(id,name,mimeType,modifiedTime)',
@@ -392,7 +570,9 @@ function indiceListarHijos_(carpetaId, driveId) {
     supportsAllDrives: true,
     includeItemsFromAllDrives: true
   };
-  if (driveId) {
+  if (todasLasUnidades) {
+    params.corpora = 'allDrives';
+  } else if (driveId) {
     params.corpora = 'drive';
     params.driveId = driveId;
   } else {
@@ -407,6 +587,86 @@ function indiceListarHijos_(carpetaId, driveId) {
     token = resp.nextPageToken;
   } while (token);
   return hijos;
+}
+
+/**
+ * Un paso del recorrido de originales: primero abre cada link pendiente
+ * (carpeta, .json suelto, otro archivo o sin acceso) y después recorre las
+ * carpetas con acceso, una por consulta. Devuelve false si Drive pidió
+ * esperar; el paso queda para la próxima parte.
+ */
+function indiceAvanzarOriginal_(O, cuenta) {
+  function agregarJson(id, nombre, padre, modificado) {
+    if (O.posJson[id] !== undefined) {
+      if (padre && !O.jsons[O.posJson[id]][2]) O.jsons[O.posJson[id]][2] = padre;
+      return;
+    }
+    O.posJson[id] = O.jsons.length;
+    O.jsons.push([id, nombre, padre, modificado || '']);
+    cuenta.jsons++;
+  }
+
+  if (O.pendientes.length > 0) {
+    var id = O.pendientes.shift();
+    var f;
+    try {
+      f = Drive.Files.get(id, { fields: 'id,name,mimeType,modifiedTime', supportsAllDrives: true });
+    } catch (err) {
+      if (indiceEsLimiteDeCuota_(err)) {
+        O.pendientes.unshift(id);
+        return false;
+      }
+      O.estados[id] = 'sin_acceso';
+      cuenta.revisados++;
+      cuenta.sinAcceso++;
+      return true;
+    }
+    cuenta.revisados++;
+    cuenta.conAcceso++;
+    if (f.mimeType === INDICE_CONFIG.CARPETA_MIME) {
+      O.estados[id] = 'carpeta';
+      if (!O.carpetas[id]) {
+        O.carpetas[id] = [f.name, null];
+        O.cola.push(id);
+      }
+    } else if (/\.json$/i.test(f.name || '')) {
+      O.estados[id] = 'json';
+      agregarJson(id, f.name, '', f.modifiedTime);
+    } else {
+      O.estados[id] = 'otro';
+    }
+    return true;
+  }
+
+  if (O.cola.length > 0) {
+    var carpetaId = O.cola.shift();
+    var hijos;
+    try {
+      hijos = indiceListarHijos_(carpetaId, null, true);
+    } catch (err) {
+      if (indiceEsLimiteDeCuota_(err)) {
+        O.cola.unshift(carpetaId);
+        return false;
+      }
+      console.warn('[Indice] No se pudo listar una carpeta original: ' + err.message);
+      return true;
+    }
+    hijos.forEach(function(h) {
+      if (h.mimeType === INDICE_CONFIG.CARPETA_MIME) {
+        if (!O.carpetas[h.id]) {
+          O.carpetas[h.id] = [h.name, carpetaId];
+          O.cola.push(h.id);
+        } else if (O.carpetas[h.id][1] === null) {
+          // Otro link apuntaba directo a esta subcarpeta: se engancha a su padre.
+          O.carpetas[h.id][1] = carpetaId;
+        }
+      } else if (/\.json$/i.test(h.name || '')) {
+        agregarJson(h.id, h.name, carpetaId, h.modifiedTime);
+      }
+    });
+    cuenta.carpetas++;
+  }
+  return true;
 }
 
 function indiceEsLimiteDeCuota_(err) {
@@ -469,6 +729,7 @@ function indiceEscribirPestana_(ss, filas) {
     return [
       sanitizarParaSheet(f.servicio),
       sanitizarParaSheet(f.caso),
+      f.origen || 'Copia',
       sanitizarParaSheet(f.carpetaEnvio),
       f.rama,
       sanitizarParaSheet(f.resto),
@@ -484,13 +745,44 @@ function indiceEscribirPestana_(ss, filas) {
   });
   hoja.getRange(2, 1, filas.length, nCols).setValues(valores);
 
+  var colArchivo = INDICE_ENCABEZADOS.indexOf('Archivo') + 1;
   var links = filas.map(function(f) {
     return [SpreadsheetApp.newRichTextValue().setText(f.archivo).setLinkUrl(f.url).build()];
   });
-  hoja.getRange(2, 6, filas.length, 1).setRichTextValues(links);
-  hoja.getRange(2, 7, filas.length, 1).setNumberFormat('dd/mm/yyyy hh:mm');
+  hoja.getRange(2, colArchivo, filas.length, 1).setRichTextValues(links);
+  hoja.getRange(2, INDICE_ENCABEZADOS.indexOf('Modificado') + 1, filas.length, 1)
+    .setNumberFormat('dd/mm/yyyy hh:mm');
 
   hoja.getRange(1, 1, filas.length + 1, nCols).createFilter();
+}
+
+/**
+ * Pestaña con las filas sin copia cuyo original no se pudo abrir (sin
+ * acceso o borrado), para pedir acceso al dueño. Se limpia y se reescribe.
+ */
+function indiceEscribirSinAcceso_(ss, lista) {
+  var hoja = ss.getSheetByName(INDICE_CONFIG.PESTANA_SIN_ACCESO) ||
+    ss.insertSheet(INDICE_CONFIG.PESTANA_SIN_ACCESO);
+  var filtro = hoja.getFilter();
+  if (filtro) filtro.remove();
+  hoja.clearContents();
+
+  var nCols = INDICE_ENCABEZADOS_SIN_ACCESO.length;
+  hoja.getRange(1, 1, 1, nCols).setValues([INDICE_ENCABEZADOS_SIN_ACCESO]).setFontWeight('bold');
+  hoja.setFrozenRows(1);
+  if (lista.length === 0) {
+    hoja.getRange(2, 1).setValue('Todas las filas sin copia tienen acceso a sus originales.');
+    return;
+  }
+
+  hoja.getRange(2, 1, lista.length, nCols).setValues(lista.map(function(s) {
+    return [s.fila, sanitizarParaSheet(s.caso), sanitizarParaSheet(s.servicio),
+      sanitizarParaSheet(s.componente), sanitizarParaSheet(s.estado), ''];
+  }));
+  hoja.getRange(2, nCols, lista.length, 1).setRichTextValues(lista.map(function(s) {
+    return [SpreadsheetApp.newRichTextValue().setText(s.url).setLinkUrl(s.url).build()];
+  }));
+  hoja.getRange(1, 1, lista.length + 1, nCols).createFilter();
 }
 
 /**
@@ -715,22 +1007,77 @@ function avanzarIndiceJson_(sheetId, presupuestoMs, opciones) {
     if (resumen.etapa === 'recorrer') {
       resumen.carpetasPendientes = trabajo.cola.length;
       resumen.jsonsEncontrados = trabajo.jsons.length;
-      if (trabajo.cola.length === 0) resumen.etapa = 'escribir';
+      if (trabajo.cola.length === 0) resumen.etapa = 'preparar';
+    }
+
+    // Filas sin copia: qué links originales hay que revisar.
+    if (resumen.etapa === 'preparar' && quedaMs() > INDICE_CONFIG.MARGEN_CONSULTA_MS) {
+      var porRevisar = indiceOriginalesPorRevisar_({
+        raizId: resumen.raizId,
+        carpetas: trabajo.carpetas,
+        jsons: trabajo.jsons
+      }, indiceLeerFilasSheet_(ss));
+      trabajo.originales = {
+        pendientes: porRevisar.ids,
+        cola: [],
+        estados: {},
+        carpetas: {},
+        jsons: [],
+        posJson: {}
+      };
+      resumen.originales = {
+        links: porRevisar.ids.length,
+        revisados: 0,
+        conAcceso: 0,
+        sinAcceso: 0,
+        carpetas: 0,
+        jsons: 0
+      };
+      resumen.etapa = 'originales';
+    }
+
+    while (resumen.etapa === 'originales' && quedaMs() > INDICE_CONFIG.MARGEN_CONSULTA_MS) {
+      if (!indiceAvanzarOriginal_(trabajo.originales, resumen.originales)) break;
+      if (trabajo.originales.pendientes.length === 0 && trabajo.originales.cola.length === 0) {
+        resumen.etapa = 'escribir';
+      }
+      if (Date.now() - ultimoGuardado > INDICE_CONFIG.GUARDAR_CONTADORES_MS) {
+        indiceGuardarResumen_(hoja, resumen);
+        indiceMostrarAvance_(ss, resumen);
+        SpreadsheetApp.flush();
+        ultimoGuardado = Date.now();
+      }
     }
 
     if (resumen.etapa === 'escribir' && quedaMs() > margenEscritura) {
       var filasSheet = indiceLeerFilasSheet_(ss);
-      var filas = indiceArmarFilas_({
+      var datos = {
         raizId: resumen.raizId,
         carpetas: trabajo.carpetas,
-        jsons: trabajo.jsons
-      }, filasSheet);
+        jsons: trabajo.jsons,
+        originales: trabajo.originales
+      };
+      var filas = indiceArmarFilas_(datos, filasSheet);
       indiceEscribirPestana_(ss, filas);
       resumen.filasIndice = filas.length;
       resumen.sinFila = filas.filter(function(f) { return f.cruce === 'sin fila'; }).length;
 
+      var filasSinAcceso = {};
+      if (trabajo.originales) {
+        var sinAcceso = indiceFilasSinAcceso_(datos, filasSheet);
+        indiceEscribirSinAcceso_(ss, sinAcceso);
+        sinAcceso.forEach(function(s) { filasSinAcceso[s.fila] = true; });
+        var filasConOriginal = {};
+        filas.forEach(function(f) {
+          if (f.origen !== 'Original') return;
+          f.numerosFila.forEach(function(n) { filasConOriginal[n] = true; });
+        });
+        resumen.originales.filasConJson = Object.keys(filasConOriginal).length;
+        resumen.originales.filasSinAcceso = Object.keys(filasSinAcceso).length;
+      }
+
       // Lo que sigue solo necesita las filas a llenar; el árbol ya no.
-      var plan = indicePlanColumnaN_(filas, filasSheet);
+      var plan = indicePlanColumnaN_(filas, filasSheet, filasSinAcceso);
       trabajo = { pendientesN: plan.objetivos };
       resumen.columnaN = {
         objetivo: plan.objetivos.length,
@@ -738,6 +1085,7 @@ function avanzarIndiceJson_(sheetId, presupuestoMs, opciones) {
         yaTenian: 0,
         cambiaron: 0,
         ambiguas: plan.ambiguas,
+        sinAcceso: plan.sinAcceso,
         sinJson: plan.sinJson
       };
       resumen.etapa = 'columnaN';
@@ -813,8 +1161,36 @@ function indiceAnotarParte_(resumen, inicio, carpetasAntes, jsonsAntes, origen) 
  * para no taparlos; si está vacía, va arriba. Al escribir el índice nuevo
  * se borra junto con lo demás.
  */
+var INDICE_ETAPAS_CON_AVANCE = ['recorrer', 'preparar', 'originales', 'escribir'];
+
+/**
+ * Una línea con lo que lleva hecho la etapa actual, para la pestaña y la
+ * tarjeta.
+ */
+function indiceTextoEtapa_(r) {
+  var copias = r.carpetasRevisadas + ' carpetas propias revisadas · ' + (r.jsonsEncontrados || 0) + ' JSON';
+  var o = r.originales;
+  switch (r.etapa) {
+    case 'recorrer':
+      return copias + ' · faltan ' + (r.carpetasPendientes || 0) + ' carpetas (más las que aparezcan dentro)';
+    case 'preparar':
+      return copias + '. Buscando las filas sin copia para revisar sus originales.';
+    case 'originales':
+      return copias + '. Originales: ' + o.revisados + ' de ' + o.links + ' links revisados (' +
+        o.conAcceso + ' con acceso, ' + o.sinAcceso + ' sin acceso) · ' + o.carpetas +
+        ' carpetas recorridas · ' + o.jsons + ' JSON';
+    case 'escribir':
+      return copias + (o ? ' · ' + o.jsons + ' JSON en originales' : '') + '. Falta escribir el índice.';
+    case 'columnaN':
+      return 'Pestaña lista. Llenando la columna N: ' + indiceFilasRevisadasN_(r.columnaN) + ' de ' +
+        r.columnaN.objetivo + ' filas revisadas.';
+    default:
+      return '';
+  }
+}
+
 function indiceMostrarAvance_(ss, resumen) {
-  if (!resumen || (resumen.etapa !== 'recorrer' && resumen.etapa !== 'escribir')) return;
+  if (!resumen || INDICE_ETAPAS_CON_AVANCE.indexOf(resumen.etapa) === -1) return;
   try {
     var pestana = ss.getSheetByName(INDICE_CONFIG.PESTANA) || ss.insertSheet(INDICE_CONFIG.PESTANA);
     var ahora = Date.now();
@@ -833,12 +1209,7 @@ function indiceMostrarAvance_(ss, resumen) {
     } else {
       estado = '⏸️ En pausa. Continúa desde el panel del add-on.';
     }
-    var avance = resumen.etapa === 'escribir'
-      ? 'Ya se revisaron las ' + resumen.carpetasRevisadas + ' carpetas (' +
-        (resumen.jsonsEncontrados || 0) + ' JSON); falta escribir el índice.'
-      : resumen.carpetasRevisadas + ' carpetas revisadas · ' + (resumen.jsonsEncontrados || 0) +
-        ' JSON encontrados · faltan ' + (resumen.carpetasPendientes || 0) +
-        ' carpetas (más las que aparezcan dentro)';
+    var avance = indiceTextoEtapa_(resumen);
     var conDatos = String(pestana.getRange(1, 1).getValue()) === INDICE_ENCABEZADOS[0];
     var columna = conDatos ? INDICE_ENCABEZADOS.length + 2 : 1;
     pestana.getRange(1, columna, 4, 1).setValues([
@@ -1041,6 +1412,18 @@ function buildIndiceJsonCard_() {
       (r.sinFila ? '<br>' + r.sinFila + ' JSON sin fila en el Sheet' : '') +
       (r.errores ? '<br>' + r.errores + ' carpeta(s) no se pudieron leer' : '')
     ));
+    if (r.originales) {
+      var o = r.originales;
+      estado.addWidget(CardService.newTextParagraph().setText(
+        '<b>Originales (filas sin copia)</b><br>' +
+        o.links + ' links revisados: ' + o.conAcceso + ' con acceso, ' + o.sinAcceso + ' sin acceso o borrados<br>' +
+        o.jsons + ' JSON en originales, para ' + (o.filasConJson || 0) + ' fila(s)' +
+        (o.filasSinAcceso
+          ? '<br>🔒 ' + o.filasSinAcceso + ' fila(s) con originales sin acceso: ver la pestaña "' +
+            INDICE_CONFIG.PESTANA_SIN_ACCESO + '"'
+          : '')
+      ));
+    }
     if (r.columnaN) {
       var c = r.columnaN;
       estado.addWidget(CardService.newTextParagraph().setText(
@@ -1049,7 +1432,10 @@ function buildIndiceJsonCard_() {
         '✔️ ' + c.yaTenian + ' ya tenían JSON (no se tocaron)' +
         (c.cambiaron ? '<br>↕️ ' + c.cambiaron + ' se saltaron porque la fila cambió mientras corría' : '') +
         (c.ambiguas ? '<br>❔ ' + c.ambiguas + ' con varias carpetas del mismo caso (ambiguas, sin tocar)' : '') +
-        '<br>➖ ' + c.sinJson + ' sin JSON en nuestras carpetas (copiadas sin JSON o solo con originales)'
+        (c.sinAcceso !== undefined
+          ? '<br>🔒 ' + c.sinAcceso + ' sin JSON porque su original no tiene acceso' +
+            '<br>➖ ' + c.sinJson + ' sin JSON ni en la copia ni en el original'
+          : '<br>➖ ' + c.sinJson + ' sin JSON en nuestras carpetas (copiadas sin JSON o solo con originales)')
       ));
     }
     estado.addWidget(CardService.newTextParagraph().setText(
@@ -1085,16 +1471,7 @@ function buildIndiceJsonCard_() {
     } else {
       lineas.push('⏸️ <b>En pausa.</b> Presiona "Continuar".');
     }
-    lineas.push('<b>' + r.carpetasRevisadas + '</b> carpetas revisadas · <b>' + (r.jsonsEncontrados || 0) +
-      '</b> JSON encontrados');
-    if (r.etapa === 'recorrer') {
-      lineas.push('Faltan ' + (r.carpetasPendientes || 0) + ' carpetas por revisar (más las que aparezcan dentro).');
-    } else if (r.etapa === 'escribir') {
-      lineas.push('Ya se revisaron todas las carpetas; falta escribir la pestaña.');
-    } else if (r.etapa === 'columnaN') {
-      lineas.push('Pestaña lista. Llenando la columna N: ' + indiceFilasRevisadasN_(r.columnaN) + ' de ' +
-        r.columnaN.objetivo + ' filas revisadas.');
-    }
+    lineas.push(escaparHtml(indiceTextoEtapa_(r)));
     lineas.push('<i>El avance también se ve en la pestaña "' + INDICE_CONFIG.PESTANA +
       '". Esta tarjeta no se refresca sola: usa "Ver avance".</i>');
     estado.addWidget(CardService.newTextParagraph().setText(lineas.join('<br>')));
@@ -1228,8 +1605,10 @@ function onEmpezarDeCeroIndiceJson(e) {
     if (r && r.ocupadoHasta > Date.now()) {
       aviso = 'Hay una parte corriendo; no se puede borrar todavía.' + indiceTextoEspera_(r);
     } else {
-      var pestana = ss.getSheetByName(INDICE_CONFIG.PESTANA);
-      if (pestana) ss.deleteSheet(pestana);
+      [INDICE_CONFIG.PESTANA, INDICE_CONFIG.PESTANA_SIN_ACCESO].forEach(function(nombre) {
+        var pestana = ss.getSheetByName(nombre);
+        if (pestana) ss.deleteSheet(pestana);
+      });
       if (hoja) hoja.clearContents();
       ScriptApp.getProjectTriggers().forEach(function(t) {
         if (t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR) ScriptApp.deleteTrigger(t);
