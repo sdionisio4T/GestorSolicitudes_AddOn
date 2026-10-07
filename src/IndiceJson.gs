@@ -916,7 +916,9 @@ function buildIndiceJsonCard_() {
     if (ocupado && r.parteEnCurso) {
       lineas.unshift('⏳ <b>Trabajando ahora: parte ' + r.parteEnCurso.n + ' (' + r.parteEnCurso.origen +
         ')</b>, empezó a las ' + formatearHoraIndice_(r.parteEnCurso.inicio) +
-        ' (hace ' + formatearDuracionIndice_(ahora - r.parteEnCurso.inicio) + ')');
+        ' (hace ' + formatearDuracionIndice_(ahora - r.parteEnCurso.inicio) + ')<br>' +
+        '<i>Mientras corre no se puede continuar ni empezar de cero. Los botones vuelven a más tardar a las ' +
+        formatearHoraIndice_(r.ocupadoHasta) + ', aunque la parte se haya caído.</i>');
     } else if (r.activador && r.activador.corrioEn) {
       lineas.unshift('<font color="#d93025">⚠️ <b>La parte automática empezó a las ' +
         formatearHoraIndice_(r.activador.corrioEn) + ' pero no terminó bien.</b> Presiona "Continuar"; sigue desde lo último guardado.</font>');
@@ -970,7 +972,7 @@ function buildIndiceJsonCard_() {
         .setOpenLink(CardService.newOpenLink().setUrl(r.urlPestana))
     );
   }
-  if (r && r.etapa !== 'terminado' && !ocupado) {
+  if (r && !ocupado) {
     botones.addButton(
       CardService.newTextButton()
         .setText('🗑️ Empezar de cero')
