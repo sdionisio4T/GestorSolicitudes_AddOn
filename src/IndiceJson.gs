@@ -7,10 +7,10 @@
  * servicio, caso, ambiente, componente, estado y link.
  *
  * El trabajo se hace por partes que guardan su avance en una pestaña oculta
- * del mismo Sheet. El botón del panel hace una parte corta (una acción de
- * tarjeta tiene 30 s) y programa un activador .after() que sigue en segundo
- * plano. Si el activador no corre, volver a presionar el botón continúa
- * desde donde quedó.
+ * del mismo Sheet. El botón del panel solo prepara y programa un activador
+ * .after(), como los reintentos de copia; cada parte corre hasta 5 min y
+ * programa la siguiente. Mientras corre, la pestaña "Índice JSON" muestra
+ * el avance. Si el activador no corre, el panel ofrece avanzar desde ahí.
  *
  * Al final llena la columna N (Archivos JSON) de la pestaña de solicitudes,
  * solo en filas con la N vacía y con un cruce seguro (por carpeta o por
@@ -20,15 +20,16 @@
 var INDICE_CONFIG = {
   PESTANA: 'Índice JSON',
   PESTANA_AVANCE: 'Índice JSON (avance)',
+  // Una parte del activador: 5 min, igual que los reintentos de copia (la
+  // ejecución tiene 6). Y una parte de respaldo desde el panel, que solo
+  // se usa si el activador no corre (una acción de tarjeta tiene 30 s).
+  PRESUPUESTO_ACTIVADOR_MS: 5 * 60 * 1000,
   PRESUPUESTO_BOTON_MS: 15000,
-  PRESUPUESTO_ACTIVADOR_MS: 4.5 * 60 * 1000,
   // Tiempo mínimo que debe quedar para empezar a escribir la pestaña.
-  MARGEN_ESCRITURA_MS: 8000,
+  MARGEN_ESCRITURA_MS: 60000,
+  MARGEN_ESCRITURA_BOTON_MS: 8000,
   // Tiempo que se reserva para no empezar otra consulta al final de la parte.
   MARGEN_CONSULTA_MS: 3000,
-  // Un avance que no termina en este tiempo se considera abandonado y se
-  // empieza de cero.
-  EDAD_MAX_MS: 6 * 60 * 60 * 1000,
   MAX_PARTES: 60,
   MAX_HISTORIAL: 8,
   MAX_LINEAS_N: 6,
@@ -561,60 +562,101 @@ function indiceEscribirBloqueN_(ss, bloque, cuenta) {
 }
 
 // ── Avance por partes ─────────────────────────────────────────────────
+//
+// Mismo esquema que Reintentos.gs: la acción del panel solo prepara y
+// programa un activador .after(); el trabajo pesado lo hace el activador,
+// que tiene minutos y no los 30 s de una acción de tarjeta. Cada parte
+// borra su propio activador al empezar y, si queda trabajo, programa el
+// siguiente al terminar.
 
 /**
- * Hace una parte del índice dentro del presupuesto. Devuelve el resumen,
- * con `ocupado: true` si otra ejecución tiene el turno.
+ * Empieza un índice nuevo: borra la pestaña anterior, la crea de nuevo con
+ * el aviso de avance y deja el trabajo listo para la primera parte.
+ * Devuelve { ocupado } si hay una parte corriendo.
+ */
+function iniciarIndiceJson_(ss) {
+  var raizId = obtenerCarpetaRaizId();
+  if (!raizId) throw new Error('No hay carpeta raíz configurada.');
+  var raiz = Drive.Files.get(raizId, { fields: 'id,driveId', supportsAllDrives: true });
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ocupado: true };
+  try {
+    var hoja = indicePestanaAvance_(ss);
+    var anterior = indiceLeerResumen_(hoja);
+    if (anterior && anterior.ocupadoHasta > Date.now()) {
+      return { ocupado: true, resumen: anterior };
+    }
+
+    var pestana = ss.getSheetByName(INDICE_CONFIG.PESTANA);
+    if (pestana) ss.deleteSheet(pestana);
+    ss.insertSheet(INDICE_CONFIG.PESTANA);
+
+    var resumen = {
+      etapa: 'recorrer',
+      raizId: raizId,
+      driveId: raiz.driveId || '',
+      iniciadoEn: Date.now(),
+      parte: 0,
+      carpetasRevisadas: 0,
+      jsonsEncontrados: 0,
+      carpetasPendientes: 1,
+      errores: 0,
+      historial: []
+    };
+    indiceGuardarTodo_(hoja, resumen, { cola: [raizId], carpetas: {}, jsons: [] });
+    SpreadsheetApp.flush();
+    return { resumen: resumen, hoja: hoja };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Hace una parte del índice dentro del presupuesto.
  *
- * opciones.origen: 'botón' o 'automática', para el historial del panel.
- * opciones.programarSiguiente: si queda trabajo, deja programada la parte
- * siguiente. El estado del activador se anota en el resumen antes de
- * crearlo, para que la parte nueva no encuentre un resumen viejo.
+ * opciones.origen: 'automática' (activador) o 'botón' (respaldo desde el
+ *   panel), para el historial.
+ * opciones.programarSiguiente: si queda trabajo, programa la parte
+ *   siguiente al terminar.
+ * opciones.margenEscrituraMs: tiempo mínimo que debe quedar para escribir
+ *   la pestaña en esta parte.
+ *
+ * Devuelve { resumen }, { ocupado } si otra parte tiene el turno, o
+ * { sinTrabajo } si no hay un índice a medias.
  */
 function avanzarIndiceJson_(sheetId, presupuestoMs, opciones) {
   opciones = opciones || {};
   var inicio = Date.now();
   var ss = SpreadsheetApp.openById(sheetId);
   var hoja = indicePestanaAvance_(ss);
-  var raizId = obtenerCarpetaRaizId();
-  if (!raizId) throw new Error('No hay carpeta raíz configurada.');
+  var margenEscritura = opciones.margenEscrituraMs || INDICE_CONFIG.MARGEN_ESCRITURA_MS;
 
-  // Turno: solo una ejecución a la vez, aunque la lancen dos personas.
+  // Turno: solo una parte a la vez, aunque la lancen dos personas.
   var resumen;
-  var trabajo = null;
+  var trabajo;
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) {
     return { ocupado: true, resumen: indiceLeerResumen_(hoja) };
   }
   try {
     resumen = indiceLeerResumen_(hoja);
-    if (resumen && resumen.ocupadoHasta > Date.now()) {
-      return { ocupado: true, resumen: resumen };
-    }
-    var empezar = !resumen ||
-      resumen.etapa === 'terminado' ||
-      resumen.raizId !== raizId ||
-      (Date.now() - resumen.iniciadoEn) > INDICE_CONFIG.EDAD_MAX_MS;
-    if (!empezar) {
+    if (!resumen || resumen.etapa === 'terminado') return { sinTrabajo: true, resumen: resumen };
+    if (resumen.ocupadoHasta > Date.now()) return { ocupado: true, resumen: resumen };
+    var problema = '';
+    if (resumen.raizId !== obtenerCarpetaRaizId()) {
+      problema = 'La carpeta raíz cambió desde que empezó el índice. Presiona "Empezar de cero".';
+    } else {
       trabajo = indiceLeerTrabajo_(hoja);
-      if (!trabajo) empezar = true;
+      if (!trabajo) problema = 'Se perdió el avance guardado. Presiona "Empezar de cero".';
     }
-    if (empezar) {
-      var raiz = Drive.Files.get(raizId, { fields: 'id,driveId', supportsAllDrives: true });
-      resumen = {
-        etapa: 'recorrer',
-        raizId: raizId,
-        driveId: raiz.driveId || '',
-        iniciadoEn: Date.now(),
-        parte: 0,
-        carpetasRevisadas: 0,
-        jsonsEncontrados: 0,
-        carpetasPendientes: 1,
-        errores: 0,
-        historial: []
-      };
-      trabajo = { cola: [raizId], carpetas: {}, jsons: [] };
+    if (problema) {
+      resumen.ultimoError = problema;
+      resumen.activador = null;
+      indiceGuardarResumen_(hoja, resumen);
+      return { error: problema, resumen: resumen };
     }
+
     resumen.parte++;
     resumen.ocupadoHasta = Date.now() + presupuestoMs + 60000;
     resumen.parteEnCurso = { n: resumen.parte, origen: opciones.origen || 'botón', inicio: inicio };
@@ -622,15 +664,12 @@ function avanzarIndiceJson_(sheetId, presupuestoMs, opciones) {
     if (opciones.origen === 'automática' && resumen.activador) {
       resumen.activador.corrioEn = inicio;
     }
-    if (empezar) {
-      indiceGuardarTodo_(hoja, resumen, trabajo);
-    } else {
-      indiceGuardarResumen_(hoja, resumen);
-    }
+    indiceGuardarResumen_(hoja, resumen);
     SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
   }
+  indiceMostrarAvance_(ss, resumen);
 
   var carpetasAntes = resumen.carpetasRevisadas;
   var jsonsAntes = resumen.jsonsEncontrados || 0;
@@ -664,11 +703,12 @@ function avanzarIndiceJson_(sheetId, presupuestoMs, opciones) {
       });
       resumen.carpetasRevisadas++;
 
-      // Contadores a la vista mientras corre una parte larga.
+      // Contadores a la vista (tarjeta y pestaña) mientras corre la parte.
       if (Date.now() - ultimoGuardado > INDICE_CONFIG.GUARDAR_CONTADORES_MS) {
         resumen.carpetasPendientes = trabajo.cola.length;
         resumen.jsonsEncontrados = trabajo.jsons.length;
         indiceGuardarResumen_(hoja, resumen);
+        indiceMostrarAvance_(ss, resumen);
         SpreadsheetApp.flush();
         ultimoGuardado = Date.now();
       }
@@ -679,10 +719,10 @@ function avanzarIndiceJson_(sheetId, presupuestoMs, opciones) {
       if (trabajo.cola.length === 0) resumen.etapa = 'escribir';
     }
 
-    if (resumen.etapa === 'escribir' && quedaMs() > INDICE_CONFIG.MARGEN_ESCRITURA_MS) {
+    if (resumen.etapa === 'escribir' && quedaMs() > margenEscritura) {
       var filasSheet = indiceLeerFilasSheet_(ss);
       var filas = indiceArmarFilas_({
-        raizId: raizId,
+        raizId: resumen.raizId,
         carpetas: trabajo.carpetas,
         jsons: trabajo.jsons
       }, filasSheet);
@@ -714,29 +754,28 @@ function avanzarIndiceJson_(sheetId, presupuestoMs, opciones) {
       trabajo.pendientesN = trabajo.pendientesN.slice(bloque.length);
     }
 
-    var terminado = false;
-    if (resumen.etapa === 'columnaN' && trabajo.pendientesN.length === 0) {
+    var terminado = resumen.etapa === 'columnaN' && trabajo.pendientesN.length === 0;
+    if (terminado) {
       resumen.etapa = 'terminado';
       resumen.terminadoEn = Date.now();
-      terminado = true;
     }
 
     indiceAnotarParte_(resumen, inicio, carpetasAntes, jsonsAntes, opciones.origen);
-    var crearActivador = !terminado && opciones.programarSiguiente &&
-      resumen.parte < INDICE_CONFIG.MAX_PARTES;
-    resumen.activador = crearActivador ? indiceRevisarCupo_() : null;
+    resumen.activador = null;
     resumen.ocupadoHasta = 0;
     resumen.parteEnCurso = null;
     indiceGuardarTodo_(hoja, resumen, terminado ? null : trabajo);
     SpreadsheetApp.flush();
 
-    if (crearActivador && resumen.activador.estado === 'programado') {
-      var creado = indiceCrearActivador_();
-      if (!creado.ok) {
-        resumen.activador = { estado: 'error', en: Date.now(), detalle: creado.error };
+    if (!terminado && opciones.programarSiguiente) {
+      if (resumen.parte < INDICE_CONFIG.MAX_PARTES) {
+        indiceProgramarParte_(ss, hoja, resumen);
+      } else {
+        resumen.ultimoError = 'Se llegó al tope de ' + INDICE_CONFIG.MAX_PARTES + ' partes.';
         indiceGuardarResumen_(hoja, resumen);
       }
     }
+    indiceMostrarAvance_(ss, resumen);
   } catch (err) {
     console.error('[Indice] Error en la parte ' + resumen.parte + ': ' + err.message);
     resumen.ultimoError = String(err.message || err).substring(0, 300);
@@ -745,12 +784,13 @@ function avanzarIndiceJson_(sheetId, presupuestoMs, opciones) {
     resumen.ocupadoHasta = 0;
     resumen.parteEnCurso = null;
     indiceGuardarTodo_(hoja, resumen, trabajo);
+    indiceMostrarAvance_(ss, resumen);
     return { error: resumen.ultimoError, resumen: resumen };
   }
 
   console.log('[Indice] Parte ' + resumen.parte + ' (' + (opciones.origen || 'botón') + '): ' +
     resumen.carpetasRevisadas + ' carpetas, ' + resumen.jsonsEncontrados + ' JSON, etapa ' +
-    resumen.etapa + (resumen.activador ? ', activador ' + resumen.activador.estado : ''));
+    resumen.etapa + (resumen.activador ? ', siguiente: ' + resumen.activador.estado : ''));
   return { resumen: resumen };
 }
 
@@ -768,21 +808,89 @@ function indiceAnotarParte_(resumen, inicio, carpetasAntes, jsonsAntes, origen) 
 }
 
 /**
- * Decide si se puede programar la parte siguiente, sin crearla todavía.
+ * Mientras se recorren las carpetas, la pestaña del índice muestra el
+ * avance en sus primeras filas. Sheets la refresca sola, sin recargar.
+ * Cuando el índice se escribe, estas filas se reemplazan por los datos.
  */
-function indiceRevisarCupo_() {
-  var activos = contarTriggersActivos();
-  if (activos >= REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS) {
-    return {
-      estado: 'sin_cupo',
-      en: Date.now(),
-      detalle: 'ya hay ' + activos + ' activadores de tiempo en uso'
-    };
+function indiceMostrarAvance_(ss, resumen) {
+  if (!resumen || (resumen.etapa !== 'recorrer' && resumen.etapa !== 'escribir')) return;
+  try {
+    var pestana = ss.getSheetByName(INDICE_CONFIG.PESTANA) || ss.insertSheet(INDICE_CONFIG.PESTANA);
+    var ahora = Date.now();
+    var estado;
+    if (resumen.ultimoError) {
+      estado = '⚠️ Se detuvo por un error: ' + resumen.ultimoError;
+    } else if (resumen.ocupadoHasta > ahora && resumen.parteEnCurso) {
+      estado = '⏳ Trabajando: parte ' + resumen.parteEnCurso.n + ' (' + resumen.parteEnCurso.origen +
+        '), empezó a las ' + formatearHoraIndice_(resumen.parteEnCurso.inicio);
+    } else if (resumen.activador && resumen.activador.estado === 'programado') {
+      estado = '⏱️ Parte ' + (resumen.parte + 1) + ' programada a las ' +
+        formatearHoraIndice_(resumen.activador.en) + '; arranca sola en unos segundos.';
+    } else if (resumen.activador) {
+      estado = '⚠️ No se pudo programar la parte siguiente: ' +
+        (resumen.activador.detalle || resumen.activador.estado) + '. Continúa desde el panel.';
+    } else {
+      estado = '⏸️ En pausa. Continúa desde el panel del add-on.';
+    }
+    var avance = resumen.etapa === 'escribir'
+      ? 'Ya se revisaron las ' + resumen.carpetasRevisadas + ' carpetas (' +
+        (resumen.jsonsEncontrados || 0) + ' JSON); falta escribir el índice.'
+      : resumen.carpetasRevisadas + ' carpetas revisadas · ' + (resumen.jsonsEncontrados || 0) +
+        ' JSON encontrados · faltan ' + (resumen.carpetasPendientes || 0) +
+        ' carpetas (más las que aparezcan dentro)';
+    pestana.getRange(1, 1, 4, 1).setValues([
+      ['Índice de JSON: actualizando. Esta pestaña se reemplaza con los datos al terminar.'],
+      [estado],
+      [avance],
+      ['Última actualización: ' + formatearHoraIndice_(ahora)]
+    ]);
+    pestana.getRange(1, 1).setFontWeight('bold');
+  } catch (err) {
+    console.warn('[Indice] No se pudo mostrar el avance en la pestaña: ' + err.message);
   }
-  return { estado: 'programado', en: Date.now() };
 }
 
-function indiceCrearActivador_() {
+/**
+ * Activadores de tiempo del usuario en este proyecto, por tipo. Sirve para
+ * ver en el panel si el del índice existe y cuánto cupo queda.
+ */
+function indiceContarActivadores_() {
+  var res = { indice: 0, reintentos: 0, total: 0 };
+  try {
+    ScriptApp.getProjectTriggers().forEach(function(t) {
+      if (t.getEventType() !== ScriptApp.EventType.CLOCK) return;
+      res.total++;
+      if (t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR) res.indice++;
+      if (t.getHandlerFunction() === 'reintentarCopiaPendiente') res.reintentos++;
+    });
+  } catch (err) {
+    res.error = err.message;
+  }
+  return res;
+}
+
+/**
+ * Programa la parte siguiente. El estado se guarda antes de crear el
+ * activador, para que la parte nueva no lea un resumen viejo; si la
+ * creación falla, se anota el error exacto (los activadores de un add-on
+ * no avisan por correo cuando fallan).
+ */
+function indiceProgramarParte_(ss, hoja, resumen) {
+  var activos = contarTriggersActivos();
+  if (activos >= REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS) {
+    resumen.activador = {
+      estado: 'sin_cupo',
+      en: Date.now(),
+      detalle: 'ya hay ' + activos + ' activadores de tiempo en uso (tope ' +
+        REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS + ')'
+    };
+    indiceGuardarResumen_(hoja, resumen);
+    return resumen.activador;
+  }
+
+  resumen.activador = { estado: 'programado', en: Date.now() };
+  indiceGuardarResumen_(hoja, resumen);
+  SpreadsheetApp.flush();
   try {
     ScriptApp.getProjectTriggers().forEach(function(t) {
       if (t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR) ScriptApp.deleteTrigger(t);
@@ -791,21 +899,31 @@ function indiceCrearActivador_() {
       .timeBased()
       .after(REINTENTOS_CONFIG.DELAY_TRIGGER_MS)
       .create();
-    return { ok: true };
+    console.log('[Indice] Parte ' + (resumen.parte + 1) + ' programada');
   } catch (err) {
-    console.warn('[Indice] No se pudo crear el activador: ' + err.message);
-    return { ok: false, error: String(err.message || err).substring(0, 200) };
+    console.error('[Indice] No se pudo crear el activador: ' + err.message);
+    resumen.activador = {
+      estado: 'error',
+      en: Date.now(),
+      detalle: String(err.message || err).substring(0, 200)
+    };
+    indiceGuardarResumen_(hoja, resumen);
   }
+  return resumen.activador;
 }
 
 /**
- * Handler del activador: borra el propio, hace una parte larga y deja
- * programada la siguiente si queda trabajo.
+ * Handler del activador. Como en los reintentos, borra su propio activador
+ * (aquí al empezar, para que una parte que se corta por tiempo no deje uno
+ * viejo listado), hace una parte larga y programa la siguiente si falta.
  */
-function continuarIndiceJson() {
+function continuarIndiceJson(e) {
   console.log('[Indice] Activador disparado');
   ScriptApp.getProjectTriggers().forEach(function(t) {
-    if (t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR) {
+    var propio = e && e.triggerUid
+      ? t.getUniqueId() === e.triggerUid
+      : t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR;
+    if (propio) {
       try { ScriptApp.deleteTrigger(t); } catch (err) { /* ya no existe */ }
     }
   });
@@ -821,6 +939,7 @@ function continuarIndiceJson() {
     programarSiguiente: true
   });
   if (res.ocupado) console.log('[Indice] Otra parte está corriendo; esta termina sin hacer nada');
+  if (res.sinTrabajo) console.log('[Indice] No hay un índice a medias; nada que hacer');
 }
 
 // ── Panel ─────────────────────────────────────────────────────────────
@@ -856,12 +975,26 @@ function textoCortoIndiceJson_() {
   if (r.ocupadoHasta > Date.now()) {
     return '⏳ Actualizando: parte ' + r.parte + ', ' + r.carpetasRevisadas + ' carpetas revisadas';
   }
+  if (r.activador && r.activador.estado === 'programado' && !r.activador.corrioEn) {
+    return '⏱️ Parte ' + (r.parte + 1) + ' programada, ' + r.carpetasRevisadas + ' carpetas revisadas';
+  }
   return '⏸️ A medias: ' + r.carpetasRevisadas + ' carpetas revisadas. Entra para continuar.';
 }
 
 /**
+ * ¿La parte siguiente debería estar corriendo y no lo está? En ese caso
+ * se ofrece avanzar desde el panel.
+ */
+function indiceActivadorConProblema_(r, ahora) {
+  if (!r.activador) return true;
+  if (r.activador.estado !== 'programado') return true;
+  if (r.activador.corrioEn) return true;
+  return ahora - r.activador.en > INDICE_CONFIG.ESPERA_ACTIVADOR_MS;
+}
+
+/**
  * Tarjeta del índice: estado, qué está corriendo ahora, si la parte
- * siguiente arranca sola y el historial de partes.
+ * siguiente arranca sola, el historial de partes y los activadores.
  */
 function buildIndiceJsonCard_() {
   var r = leerEstadoIndiceJson_();
@@ -874,16 +1007,27 @@ function buildIndiceJsonCard_() {
     );
 
   var estado = CardService.newCardSection();
-  var textoBoton = '🗂️ Actualizar índice';
   var ocupado = !!(r && r.ocupadoHasta > ahora);
+  var botones = CardService.newButtonSet();
+
+  function boton(texto, funcion, principal) {
+    var b = CardService.newTextButton()
+      .setText(texto)
+      .setOnClickAction(CardService.newAction().setFunctionName(funcion));
+    if (principal) {
+      b.setTextButtonStyle(CardService.TextButtonStyle.FILLED).setBackgroundColor('#1a73e8');
+    }
+    botones.addButton(b);
+  }
 
   if (!r) {
     estado.addWidget(CardService.newTextParagraph().setText(
-      'Todavía no hay índice. Al presionar el botón se recorre la carpeta raíz y se crea la pestaña "' +
-      INDICE_CONFIG.PESTANA + '" con una fila por cada .json, con su servicio, caso, ambiente, componente, estado y link. ' +
-      'Después llena la columna N de las filas que la tengan vacía.'
+      'Todavía no hay índice. Al presionar el botón se crea la pestaña "' + INDICE_CONFIG.PESTANA +
+      '" y el trabajo sigue solo en segundo plano: recorre la carpeta raíz, escribe una fila por cada .json ' +
+      '(servicio, caso, ambiente, componente, estado y link) y llena la columna N de las filas que la tengan vacía.<br>' +
+      '<i>El avance se ve en la misma pestaña mientras corre.</i>'
     ));
-    textoBoton = '🗂️ Crear índice';
+    boton('🗂️ Crear índice', 'onIniciarIndiceJson', true);
   } else if (r.etapa === 'terminado') {
     estado.addWidget(CardService.newTextParagraph().setText(
       '✅ <b>Actualizado el ' + formatearFechaIndice_(r.terminadoEn) + '</b><br>' +
@@ -903,80 +1047,69 @@ function buildIndiceJsonCard_() {
         '<br>➖ ' + c.sinJson + ' sin JSON en nuestras carpetas (copiadas sin JSON o solo con originales)'
       ));
     }
+    boton('🗂️ Crear de nuevo', 'onIniciarIndiceJson', true);
   } else {
-    var lineas = [
-      '<b>' + r.carpetasRevisadas + '</b> carpetas revisadas · <b>' + (r.jsonsEncontrados || 0) + '</b> JSON encontrados',
-      r.etapa === 'escribir'
-        ? 'Ya se revisaron todas las carpetas; falta escribir la pestaña.'
-        : r.etapa === 'columnaN'
-          ? 'Pestaña lista. Llenando la columna N: ' + indiceFilasRevisadasN_(r.columnaN) + ' de ' +
-            r.columnaN.objetivo + ' filas revisadas.'
-          : 'Faltan ' + (r.carpetasPendientes || 0) + ' carpetas por revisar (más las que aparezcan dentro).'
-    ];
+    var lineas = [];
     if (ocupado && r.parteEnCurso) {
-      lineas.unshift('⏳ <b>Trabajando ahora: parte ' + r.parteEnCurso.n + ' (' + r.parteEnCurso.origen +
+      lineas.push('⏳ <b>Trabajando ahora: parte ' + r.parteEnCurso.n + ' (' + r.parteEnCurso.origen +
         ')</b>, empezó a las ' + formatearHoraIndice_(r.parteEnCurso.inicio) +
-        ' (hace ' + formatearDuracionIndice_(ahora - r.parteEnCurso.inicio) + ')<br>' +
-        '<i>Mientras corre no se puede continuar ni empezar de cero. Los botones vuelven a más tardar a las ' +
+        ' (hace ' + formatearDuracionIndice_(ahora - r.parteEnCurso.inicio) + ').');
+      lineas.push('<i>Mientras corre no se puede continuar ni empezar de cero. Los botones vuelven a más tardar a las ' +
         formatearHoraIndice_(r.ocupadoHasta) + ', aunque la parte se haya caído.</i>');
     } else if (r.activador && r.activador.corrioEn) {
-      lineas.unshift('<font color="#d93025">⚠️ <b>La parte automática empezó a las ' +
-        formatearHoraIndice_(r.activador.corrioEn) + ' pero no terminó bien.</b> Presiona "Continuar"; sigue desde lo último guardado.</font>');
+      lineas.push('<font color="#d93025">⚠️ <b>La parte automática empezó a las ' +
+        formatearHoraIndice_(r.activador.corrioEn) + ' pero no terminó bien.</b> Continúa; sigue desde lo último guardado.</font>');
     } else if (r.activador && r.activador.estado === 'programado') {
       var espera = ahora - r.activador.en;
       if (espera < INDICE_CONFIG.ESPERA_ACTIVADOR_MS) {
-        lineas.unshift('⏱️ <b>La parte ' + (r.parte + 1) + ' arranca sola en unos segundos</b> (programada a las ' +
+        lineas.push('⏱️ <b>La parte ' + (r.parte + 1) + ' arranca sola en unos segundos</b> (programada a las ' +
           formatearHoraIndice_(r.activador.en) + ').');
       } else {
-        lineas.unshift('<font color="#d93025">⚠️ <b>La parte ' + (r.parte + 1) + ' se programó a las ' +
+        lineas.push('<font color="#d93025">⚠️ <b>La parte ' + (r.parte + 1) + ' se programó a las ' +
           formatearHoraIndice_(r.activador.en) + ' y Google no la ha corrido</b> (hace ' +
-          formatearDuracionIndice_(espera) + '). Presiona "Continuar".</font>');
+          formatearDuracionIndice_(espera) + '). Usa "Avanzar desde aquí".</font>');
       }
-    } else if (r.activador && r.activador.estado !== 'programado') {
-      lineas.unshift('<font color="#d93025">⚠️ <b>No se pudo programar la parte siguiente</b>: ' +
-        escaparHtml(r.activador.detalle || r.activador.estado) + '. Presiona "Continuar".</font>');
+    } else if (r.activador) {
+      lineas.push('<font color="#d93025">⚠️ <b>No se pudo programar la parte siguiente</b>: ' +
+        escaparHtml(r.activador.detalle || r.activador.estado) + '</font>');
     } else {
-      lineas.unshift('⏸️ <b>En pausa.</b> Presiona "Continuar" para seguir.');
+      lineas.push('⏸️ <b>En pausa.</b> Presiona "Continuar".');
     }
-    lineas.push('<i>Esta tarjeta no se refresca sola: usa "Ver avance".</i>');
+    lineas.push('<b>' + r.carpetasRevisadas + '</b> carpetas revisadas · <b>' + (r.jsonsEncontrados || 0) +
+      '</b> JSON encontrados');
+    if (r.etapa === 'recorrer') {
+      lineas.push('Faltan ' + (r.carpetasPendientes || 0) + ' carpetas por revisar (más las que aparezcan dentro).');
+    } else if (r.etapa === 'escribir') {
+      lineas.push('Ya se revisaron todas las carpetas; falta escribir la pestaña.');
+    } else if (r.etapa === 'columnaN') {
+      lineas.push('Pestaña lista. Llenando la columna N: ' + indiceFilasRevisadasN_(r.columnaN) + ' de ' +
+        r.columnaN.objetivo + ' filas revisadas.');
+    }
+    lineas.push('<i>El avance también se ve en la pestaña "' + INDICE_CONFIG.PESTANA +
+      '". Esta tarjeta no se refresca sola: usa "Ver avance".</i>');
     estado.addWidget(CardService.newTextParagraph().setText(lineas.join('<br>')));
-    textoBoton = '▶️ Continuar';
+
+    if (!ocupado) {
+      boton('▶️ Continuar', 'onContinuarIndiceJson', true);
+    }
+    boton('🔄 Ver avance', 'onVerAvanceIndiceJson', false);
+    if (!ocupado) {
+      boton('🗑️ Empezar de cero', 'onIniciarIndiceJson', false);
+      if (indiceActivadorConProblema_(r, ahora)) {
+        boton('⚙️ Avanzar desde aquí', 'onAvanzarAquiIndiceJson', false);
+      }
+    }
   }
   if (r && r.ultimoError) {
     estado.addWidget(CardService.newTextParagraph().setText(
       '<font color="#d93025">Último error: ' + escaparHtml(r.ultimoError) + '</font>'
     ));
   }
-
-  var botones = CardService.newButtonSet();
-  if (!ocupado) {
-    botones.addButton(
-      CardService.newTextButton()
-        .setText(textoBoton)
-        .setOnClickAction(CardService.newAction().setFunctionName('onActualizarIndiceJson'))
-        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
-        .setBackgroundColor('#1a73e8')
-    );
-  }
-  if (r && r.etapa !== 'terminado') {
-    botones.addButton(
-      CardService.newTextButton()
-        .setText('🔄 Ver avance')
-        .setOnClickAction(CardService.newAction().setFunctionName('onVerAvanceIndiceJson'))
-    );
-  }
   if (r && r.urlPestana) {
     botones.addButton(
       CardService.newTextButton()
         .setText('Abrir pestaña')
         .setOpenLink(CardService.newOpenLink().setUrl(r.urlPestana))
-    );
-  }
-  if (r && !ocupado) {
-    botones.addButton(
-      CardService.newTextButton()
-        .setText('🗑️ Empezar de cero')
-        .setOnClickAction(CardService.newAction().setFunctionName('onReiniciarIndiceJson'))
     );
   }
   estado.addWidget(botones);
@@ -990,13 +1123,32 @@ function buildIndiceJsonCard_() {
     card.addSection(
       CardService.newCardSection()
         .setHeader('Partes (la más reciente arriba)')
-        .setCollapsible(true)
-        .setNumUncollapsibleWidgets(1)
         .addWidget(CardService.newTextParagraph().setText(partes.join('<br>')))
     );
   }
 
+  var act = indiceContarActivadores_();
+  card.addSection(
+    CardService.newCardSection()
+      .setHeader('Activadores')
+      .setCollapsible(true)
+      .addWidget(CardService.newTextParagraph().setText(
+        act.error
+          ? 'No se pudieron leer: ' + escaparHtml(act.error)
+          : 'Del índice: ' + act.indice + ' · de reintentos: ' + act.reintentos +
+            ' · de tiempo en total: ' + act.total + ' (tope ' + REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS + ')<br>' +
+            '<i>También se ven en script.google.com → Mis activadores.</i>'
+      ))
+  );
+
   return card.build();
+}
+
+function respuestaIndiceJson_(aviso) {
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(buildIndiceJsonCard_()))
+    .setNotification(CardService.newNotification().setText(aviso))
+    .build();
 }
 
 /**
@@ -1015,73 +1167,84 @@ function onVerAvanceIndiceJson(e) {
 }
 
 /**
- * Descarta el avance a medias y el activador pendiente. La pestaña del
- * índice anterior no se toca; se reemplaza al terminar el próximo.
+ * "Crear índice", "Crear de nuevo" y "Empezar de cero": borra la pestaña
+ * anterior y programa la primera parte. No recorre nada aquí.
  */
-function onReiniciarIndiceJson(e) {
-  var aviso;
-  var lock = LockService.getScriptLock();
-  try {
-    if (!lock.tryLock(10000)) throw new Error('el Sheet está ocupado, intenta en unos segundos.');
-    var ss = SpreadsheetApp.openById(obtenerSheetId());
-    var hoja = ss.getSheetByName(INDICE_CONFIG.PESTANA_AVANCE);
-    var r = hoja ? indiceLeerResumen_(hoja) : null;
-    if (r && r.ocupadoHasta > Date.now()) {
-      aviso = 'Hay una parte corriendo. Espera a que termine y vuelve a intentar.';
-    } else {
-      if (hoja) hoja.clearContents();
-      ScriptApp.getProjectTriggers().forEach(function(t) {
-        if (t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR) ScriptApp.deleteTrigger(t);
-      });
-      aviso = 'Avance descartado. El próximo "Crear índice" empieza de cero.';
-    }
-  } catch (err) {
-    console.error('[Indice] ' + err.message);
-    aviso = 'No se pudo descartar el avance: ' + err.message;
-  } finally {
-    lock.releaseLock();
-  }
-  return CardService.newActionResponseBuilder()
-    .setNavigation(CardService.newNavigation().updateCard(buildIndiceJsonCard_()))
-    .setNotification(CardService.newNotification().setText(aviso))
-    .build();
-}
-
-/**
- * Botón "Crear / Actualizar / Continuar" de la tarjeta del índice.
- */
-function onActualizarIndiceJson(e) {
+function onIniciarIndiceJson(e) {
   var aviso;
   try {
     var motivo = motivoConfigInvalida();
     if (motivo) throw new Error(motivo);
     var sheetId = obtenerSheetId();
     PropertiesService.getUserProperties().setProperty('INDICE_SHEET_ID', sheetId);
+    var ss = SpreadsheetApp.openById(sheetId);
 
-    var res = avanzarIndiceJson_(sheetId, INDICE_CONFIG.PRESUPUESTO_BOTON_MS, {
-      origen: 'botón',
-      programarSiguiente: true
-    });
-    var r = res.resumen || {};
-    if (res.ocupado) {
-      aviso = 'Ya hay una parte corriendo. Usa "Ver avance" en unos segundos.';
-    } else if (res.error) {
-      aviso = 'No se pudo avanzar el índice: ' + res.error;
-    } else if (r.etapa === 'terminado') {
-      aviso = 'Índice actualizado: ' + r.filasIndice + ' JSON; ' +
-        r.columnaN.llenadas + ' fila(s) llenadas en la columna N.';
-    } else if (r.activador && r.activador.estado === 'programado') {
-      aviso = 'Parte ' + r.parte + ' lista. La siguiente arranca sola en unos segundos.';
+    var ini = iniciarIndiceJson_(ss);
+    if (ini.ocupado) {
+      aviso = 'Hay una parte corriendo. Espera a que termine y vuelve a intentar.';
     } else {
-      aviso = 'Parte ' + r.parte + ' lista. Presiona "Continuar" para seguir.';
+      var act = indiceProgramarParte_(ss, ini.hoja, ini.resumen);
+      indiceMostrarAvance_(ss, ini.resumen);
+      aviso = act.estado === 'programado'
+        ? 'Índice programado: arranca solo en unos segundos. El avance se ve en la pestaña ' + INDICE_CONFIG.PESTANA + '.'
+        : 'No se pudo programar el índice: ' + (act.detalle || act.estado);
     }
   } catch (err) {
     console.error('[Indice] ' + err.message);
-    aviso = 'No se pudo actualizar el índice: ' + err.message;
+    aviso = 'No se pudo crear el índice: ' + err.message;
   }
+  return respuestaIndiceJson_(aviso);
+}
 
-  return CardService.newActionResponseBuilder()
-    .setNavigation(CardService.newNavigation().updateCard(buildIndiceJsonCard_()))
-    .setNotification(CardService.newNotification().setText(aviso))
-    .build();
+/**
+ * "Continuar": vuelve a programar la parte siguiente sin hacer trabajo aquí.
+ */
+function onContinuarIndiceJson(e) {
+  var aviso;
+  try {
+    var ss = SpreadsheetApp.openById(obtenerSheetId());
+    var hoja = indicePestanaAvance_(ss);
+    var r = indiceLeerResumen_(hoja);
+    if (!r || r.etapa === 'terminado') {
+      aviso = 'No hay un índice a medias.';
+    } else if (r.ocupadoHasta > Date.now()) {
+      aviso = 'Ya hay una parte corriendo.';
+    } else {
+      r.ultimoError = '';
+      var act = indiceProgramarParte_(ss, hoja, r);
+      indiceMostrarAvance_(ss, r);
+      aviso = act.estado === 'programado'
+        ? 'Parte ' + (r.parte + 1) + ' programada: arranca sola en unos segundos.'
+        : 'No se pudo programar: ' + (act.detalle || act.estado);
+    }
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo continuar: ' + err.message;
+  }
+  return respuestaIndiceJson_(aviso);
+}
+
+/**
+ * Respaldo si el activador no corre: hace una parte corta desde el panel
+ * (una acción de tarjeta tiene 30 s) y no programa la siguiente.
+ */
+function onAvanzarAquiIndiceJson(e) {
+  var aviso;
+  try {
+    var res = avanzarIndiceJson_(obtenerSheetId(), INDICE_CONFIG.PRESUPUESTO_BOTON_MS, {
+      origen: 'botón',
+      programarSiguiente: false,
+      margenEscrituraMs: INDICE_CONFIG.MARGEN_ESCRITURA_BOTON_MS
+    });
+    var r = res.resumen || {};
+    if (res.ocupado) aviso = 'Ya hay una parte corriendo.';
+    else if (res.sinTrabajo) aviso = 'No hay un índice a medias.';
+    else if (res.error) aviso = 'No se pudo avanzar: ' + res.error;
+    else if (r.etapa === 'terminado') aviso = 'Índice terminado: ' + r.filasIndice + ' JSON.';
+    else aviso = 'Parte ' + r.parte + ' lista. Presiona otra vez para seguir.';
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo avanzar: ' + err.message;
+  }
+  return respuestaIndiceJson_(aviso);
 }
