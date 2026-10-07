@@ -570,8 +570,9 @@ function indiceEscribirBloqueN_(ss, bloque, cuenta) {
 // siguiente al terminar.
 
 /**
- * Empieza un índice nuevo: borra la pestaña anterior, la crea de nuevo con
- * el aviso de avance y deja el trabajo listo para la primera parte.
+ * Empieza un índice (nuevo o actualización) y deja el trabajo listo para
+ * la primera parte. La pestaña no se borra: si ya tiene datos, se quedan
+ * visibles hasta que la última parte los reemplaza.
  * Devuelve { ocupado } si hay una parte corriendo.
  */
 function iniciarIndiceJson_(ss) {
@@ -588,9 +589,7 @@ function iniciarIndiceJson_(ss) {
       return { ocupado: true, resumen: anterior };
     }
 
-    var pestana = ss.getSheetByName(INDICE_CONFIG.PESTANA);
-    if (pestana) ss.deleteSheet(pestana);
-    ss.insertSheet(INDICE_CONFIG.PESTANA);
+    if (!ss.getSheetByName(INDICE_CONFIG.PESTANA)) ss.insertSheet(INDICE_CONFIG.PESTANA);
 
     var resumen = {
       etapa: 'recorrer',
@@ -809,8 +808,10 @@ function indiceAnotarParte_(resumen, inicio, carpetasAntes, jsonsAntes, origen) 
 
 /**
  * Mientras se recorren las carpetas, la pestaña del índice muestra el
- * avance en sus primeras filas. Sheets la refresca sola, sin recargar.
- * Cuando el índice se escribe, estas filas se reemplazan por los datos.
+ * avance. Sheets la refresca sola, sin recargar. Si la pestaña ya tiene
+ * datos de un índice anterior, el avance va en una columna a la derecha
+ * para no taparlos; si está vacía, va arriba. Al escribir el índice nuevo
+ * se borra junto con lo demás.
  */
 function indiceMostrarAvance_(ss, resumen) {
   if (!resumen || (resumen.etapa !== 'recorrer' && resumen.etapa !== 'escribir')) return;
@@ -838,13 +839,17 @@ function indiceMostrarAvance_(ss, resumen) {
       : resumen.carpetasRevisadas + ' carpetas revisadas · ' + (resumen.jsonsEncontrados || 0) +
         ' JSON encontrados · faltan ' + (resumen.carpetasPendientes || 0) +
         ' carpetas (más las que aparezcan dentro)';
-    pestana.getRange(1, 1, 4, 1).setValues([
-      ['Índice de JSON: actualizando. Esta pestaña se reemplaza con los datos al terminar.'],
+    var conDatos = String(pestana.getRange(1, 1).getValue()) === INDICE_ENCABEZADOS[0];
+    var columna = conDatos ? INDICE_ENCABEZADOS.length + 2 : 1;
+    pestana.getRange(1, columna, 4, 1).setValues([
+      [conDatos
+        ? 'Actualizando el índice. Los datos de la izquierda son del índice anterior y se reemplazan al terminar.'
+        : 'Índice de JSON: creando. Los datos aparecen aquí al terminar.'],
       [estado],
       [avance],
       ['Última actualización: ' + formatearHoraIndice_(ahora)]
     ]);
-    pestana.getRange(1, 1).setFontWeight('bold');
+    pestana.getRange(1, columna).setFontWeight('bold');
   } catch (err) {
     console.warn('[Indice] No se pudo mostrar el avance en la pestaña: ' + err.message);
   }
@@ -1047,7 +1052,12 @@ function buildIndiceJsonCard_() {
         '<br>➖ ' + c.sinJson + ' sin JSON en nuestras carpetas (copiadas sin JSON o solo con originales)'
       ));
     }
-    boton('🗑️ Empezar de cero', 'onIniciarIndiceJson', true);
+    estado.addWidget(CardService.newTextParagraph().setText(
+      '<i>"Actualizar" usa la misma pestaña: los datos actuales se ven mientras corre y se reemplazan al terminar. ' +
+      '"Empezar de cero" solo borra la pestaña y el avance.</i>'
+    ));
+    boton('🔄 Actualizar índice', 'onIniciarIndiceJson', true);
+    boton('🗑️ Empezar de cero', 'onEmpezarDeCeroIndiceJson', false);
   } else {
     var lineas = [];
     if (ocupado && r.parteEnCurso) {
@@ -1093,7 +1103,7 @@ function buildIndiceJsonCard_() {
       boton('▶️ Continuar', 'onContinuarIndiceJson', true);
     }
     boton('🔄 Ver avance', 'onVerAvanceIndiceJson', false);
-    boton('🗑️ Empezar de cero', 'onIniciarIndiceJson', false);
+    boton('🗑️ Empezar de cero', 'onEmpezarDeCeroIndiceJson', false);
     if (!ocupado && indiceActivadorConProblema_(r, ahora)) {
       boton('⚙️ Avanzar desde aquí', 'onAvanzarAquiIndiceJson', false);
     }
@@ -1165,8 +1175,8 @@ function onVerAvanceIndiceJson(e) {
 }
 
 /**
- * "Crear índice", "Crear de nuevo" y "Empezar de cero": borra la pestaña
- * anterior y programa la primera parte. No recorre nada aquí.
+ * "Crear índice" y "Actualizar índice": programa la primera parte sobre la
+ * misma pestaña, sin borrarla. No recorre nada aquí.
  */
 function onIniciarIndiceJson(e) {
   var aviso;
@@ -1179,10 +1189,7 @@ function onIniciarIndiceJson(e) {
 
     var ini = iniciarIndiceJson_(ss);
     if (ini.ocupado) {
-      aviso = 'Hay una parte corriendo; no se puede empezar de cero todavía.' +
-        (ini.resumen && ini.resumen.ocupadoHasta
-          ? ' Se podrá a más tardar a las ' + formatearHoraIndice_(ini.resumen.ocupadoHasta) + '.'
-          : ' Intenta en unos segundos.');
+      aviso = 'Hay una parte corriendo.' + indiceTextoEspera_(ini.resumen);
     } else {
       var act = indiceProgramarParte_(ss, ini.hoja, ini.resumen);
       indiceMostrarAvance_(ss, ini.resumen);
@@ -1193,6 +1200,47 @@ function onIniciarIndiceJson(e) {
   } catch (err) {
     console.error('[Indice] ' + err.message);
     aviso = 'No se pudo crear el índice: ' + err.message;
+  }
+  return respuestaIndiceJson_(aviso);
+}
+
+function indiceTextoEspera_(resumen) {
+  return resumen && resumen.ocupadoHasta
+    ? ' Se podrá a más tardar a las ' + formatearHoraIndice_(resumen.ocupadoHasta) + '.'
+    : ' Intenta en unos segundos.';
+}
+
+/**
+ * "Empezar de cero": solo borra. Quita la pestaña del índice, el avance
+ * guardado y el activador pendiente; no arranca nada. La columna N de la
+ * pestaña de solicitudes no se toca.
+ */
+function onEmpezarDeCeroIndiceJson(e) {
+  var aviso;
+  var lock = LockService.getScriptLock();
+  var conLock = false;
+  try {
+    conLock = lock.tryLock(10000);
+    if (!conLock) throw new Error('el Sheet está ocupado, intenta en unos segundos.');
+    var ss = SpreadsheetApp.openById(obtenerSheetId());
+    var hoja = ss.getSheetByName(INDICE_CONFIG.PESTANA_AVANCE);
+    var r = hoja ? indiceLeerResumen_(hoja) : null;
+    if (r && r.ocupadoHasta > Date.now()) {
+      aviso = 'Hay una parte corriendo; no se puede borrar todavía.' + indiceTextoEspera_(r);
+    } else {
+      var pestana = ss.getSheetByName(INDICE_CONFIG.PESTANA);
+      if (pestana) ss.deleteSheet(pestana);
+      if (hoja) hoja.clearContents();
+      ScriptApp.getProjectTriggers().forEach(function(t) {
+        if (t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR) ScriptApp.deleteTrigger(t);
+      });
+      aviso = 'Índice borrado. Presiona "Crear índice" cuando quieras empezar.';
+    }
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo borrar el índice: ' + err.message;
+  } finally {
+    if (conLock) lock.releaseLock();
   }
   return respuestaIndiceJson_(aviso);
 }
@@ -1253,9 +1301,10 @@ function onAvanzarAquiIndiceJson(e) {
 // Nombres de botones de versiones anteriores. Una tarjeta que quedó
 // abierta en el panel sigue llamándolos hasta que se vuelve a abrir.
 function onReiniciarIndiceJson(e) {
-  return onIniciarIndiceJson(e);
+  return onEmpezarDeCeroIndiceJson(e);
 }
 
 function onActualizarIndiceJson(e) {
-  return onContinuarIndiceJson(e);
+  var r = leerEstadoIndiceJson_();
+  return r && r.etapa !== 'terminado' ? onContinuarIndiceJson(e) : onIniciarIndiceJson(e);
 }
