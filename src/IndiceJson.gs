@@ -1047,14 +1047,14 @@ function buildIndiceJsonCard_() {
         '<br>➖ ' + c.sinJson + ' sin JSON en nuestras carpetas (copiadas sin JSON o solo con originales)'
       ));
     }
-    boton('🗂️ Crear de nuevo', 'onIniciarIndiceJson', true);
+    boton('🗑️ Empezar de cero', 'onIniciarIndiceJson', true);
   } else {
     var lineas = [];
     if (ocupado && r.parteEnCurso) {
       lineas.push('⏳ <b>Trabajando ahora: parte ' + r.parteEnCurso.n + ' (' + r.parteEnCurso.origen +
         ')</b>, empezó a las ' + formatearHoraIndice_(r.parteEnCurso.inicio) +
         ' (hace ' + formatearDuracionIndice_(ahora - r.parteEnCurso.inicio) + ').');
-      lineas.push('<i>Mientras corre no se puede continuar ni empezar de cero. Los botones vuelven a más tardar a las ' +
+      lineas.push('<i>Mientras corre no se puede empezar de cero: se podrá cuando termine esta parte, a más tardar a las ' +
         formatearHoraIndice_(r.ocupadoHasta) + ', aunque la parte se haya caído.</i>');
     } else if (r.activador && r.activador.corrioEn) {
       lineas.push('<font color="#d93025">⚠️ <b>La parte automática empezó a las ' +
@@ -1093,11 +1093,9 @@ function buildIndiceJsonCard_() {
       boton('▶️ Continuar', 'onContinuarIndiceJson', true);
     }
     boton('🔄 Ver avance', 'onVerAvanceIndiceJson', false);
-    if (!ocupado) {
-      boton('🗑️ Empezar de cero', 'onIniciarIndiceJson', false);
-      if (indiceActivadorConProblema_(r, ahora)) {
-        boton('⚙️ Avanzar desde aquí', 'onAvanzarAquiIndiceJson', false);
-      }
+    boton('🗑️ Empezar de cero', 'onIniciarIndiceJson', false);
+    if (!ocupado && indiceActivadorConProblema_(r, ahora)) {
+      boton('⚙️ Avanzar desde aquí', 'onAvanzarAquiIndiceJson', false);
     }
   }
   if (r && r.ultimoError) {
@@ -1181,7 +1179,10 @@ function onIniciarIndiceJson(e) {
 
     var ini = iniciarIndiceJson_(ss);
     if (ini.ocupado) {
-      aviso = 'Hay una parte corriendo. Espera a que termine y vuelve a intentar.';
+      aviso = 'Hay una parte corriendo; no se puede empezar de cero todavía.' +
+        (ini.resumen && ini.resumen.ocupadoHasta
+          ? ' Se podrá a más tardar a las ' + formatearHoraIndice_(ini.resumen.ocupadoHasta) + '.'
+          : ' Intenta en unos segundos.');
     } else {
       var act = indiceProgramarParte_(ss, ini.hoja, ini.resumen);
       indiceMostrarAvance_(ss, ini.resumen);
@@ -1247,4 +1248,14 @@ function onAvanzarAquiIndiceJson(e) {
     aviso = 'No se pudo avanzar: ' + err.message;
   }
   return respuestaIndiceJson_(aviso);
+}
+
+// Nombres de botones de versiones anteriores. Una tarjeta que quedó
+// abierta en el panel sigue llamándolos hasta que se vuelve a abrir.
+function onReiniciarIndiceJson(e) {
+  return onIniciarIndiceJson(e);
+}
+
+function onActualizarIndiceJson(e) {
+  return onContinuarIndiceJson(e);
 }
