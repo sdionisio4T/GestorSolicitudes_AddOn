@@ -290,7 +290,7 @@ function onHomepageSheets(e) {
     return [buildCardConfigApropiada(motivo)];
   }
 
-  return [buildListaEnviosEnCursoCard({})];
+  return [buildListaEnviosEnCursoCard({ conIndice: true })];
 }
 
 function onGmailMessageOpen(e) {

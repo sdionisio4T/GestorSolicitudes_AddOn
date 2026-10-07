@@ -5,7 +5,7 @@
 // Versión del add-on, con el esquema MAYOR.MENOR.PARCHE y sin la "V".
 // Se muestra en la tarjeta de inicio, en Diagnóstico y al pie de Ayuda.
 // Se sube a mano en el mismo commit del cambio.
-var VERSION_APP = '1.0.0';
+var VERSION_APP = '1.1.0';
 
 var CONFIG = {
 
