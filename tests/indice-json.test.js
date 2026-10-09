@@ -411,12 +411,24 @@ test('dejar lista la parte siguiente: solo mientras corre una y una vez por part
   assert.strictEqual(a({ ...corriendo, parteIniciadaEn: ahora - 10 * 60000 }), false);
 });
 
-test('dejar lista la parte siguiente: arranca poco despues del fin previsto de la que corre', () => {
+test('la parte que corre no pisa lo que el panel anoto al dejar lista la siguiente', () => {
+  const nota = { partes: 1, filaActual: 50, adelantada: null, activador: null };
+  const guardada = { partes: 1, filaActual: 10, adelantada: { parte: 1, en: 5 }, activador: { estado: 'programado', en: 4 } };
+  gs.indiceConservarDelPanel_(nota, guardada);
+  assert.deepStrictEqual(plano(nota.adelantada), { parte: 1, en: 5 });
+  assert.strictEqual(nota.activador.estado, 'programado');
+  // Lo demas es de la parte: no cambia.
+  assert.strictEqual(nota.filaActual, 50);
+  gs.indiceConservarDelPanel_(nota, null);
+  assert.strictEqual(nota.filaActual, 50);
+});
+
+test('dejar lista la parte siguiente: arranca cuando la que corre deja de revisar filas', () => {
   const ahora = 100 * 60 * 1000;
   const B = gs.INDICE_BUSQUEDA;
-  // Clic al minuto de empezar: falta el resto del presupuesto mas el margen.
+  // Clic al minuto de empezar: falta el resto del presupuesto menos el margen final.
   assert.strictEqual(gs.indiceRetrasoAdelanto_({ parteIniciadaEn: ahora - 60000 }, ahora),
-    B.PRESUPUESTO_MS + B.MARGEN_ADELANTO_MS - 60000);
+    B.PRESUPUESTO_MS - B.MARGEN_FILA_MS - 60000);
   // Clic justo al final: nunca menos que el retraso normal.
   assert.strictEqual(gs.indiceRetrasoAdelanto_({ parteIniciadaEn: ahora - 10 * 60000 }, ahora),
     gs.REINTENTOS_CONFIG.DELAY_TRIGGER_MS);

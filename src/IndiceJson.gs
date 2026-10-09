@@ -844,9 +844,6 @@ var INDICE_BUSQUEDA = {
   // Si Google rechaza programar la parte siguiente por el límite de una vez
   // por hora, se programa para dentro de este tiempo.
   ESPERA_HORA_MS: 61 * 60 * 1000,
-  // Al dejar lista la parte siguiente mientras corre una, se programa para
-  // este tiempo después del fin previsto de la que corre.
-  MARGEN_ADELANTO_MS: 15000,
   // Si una parte arranca mientras la anterior todavía corre, espera su turno
   // hasta este tiempo (el que espera se descuenta de su presupuesto).
   ESPERA_TURNO_MS: 2 * 60 * 1000,
@@ -1120,6 +1117,16 @@ function indiceRevisarOriginalesDeFila_(fila, arbol, originales, cuentaO, quedaM
  * Devuelve { ocupado, nota } si otra búsqueda tiene el turno, o
  * { terminado, nota, cuenta } al terminar la ejecución.
  */
+/**
+ * Mientras corre una parte, el panel puede dejar lista la siguiente: la
+ * parte, al guardar su nota, conserva lo que el panel anotó.
+ */
+function indiceConservarDelPanel_(nota, guardada) {
+  if (!guardada) return;
+  nota.adelantada = guardada.adelantada || null;
+  nota.activador = guardada.activador || null;
+}
+
 function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
   var inicio = Date.now();
   function quedaMs() { return presupuestoMs - (Date.now() - inicio); }
@@ -1166,6 +1173,7 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
   var avisar = function(paso, carpetas) {
     var guardada = indiceLeerNota_(sheetId);
     if (guardada && guardada.detener) return true;
+    indiceConservarDelPanel_(nota, guardada);
     nota.avance = { paso: paso, carpetas: carpetas, en: Date.now() };
     nota.cuenta = cuenta;
     indiceGuardarNota_(sheetId, nota);
@@ -1309,6 +1317,7 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
   } finally {
     // Si alguien pidió detener mientras corría, no se pisa ese pedido.
     var guardadaAlFinal = indiceLeerNota_(sheetId);
+    indiceConservarDelPanel_(nota, guardadaAlFinal);
     if (guardadaAlFinal && guardadaAlFinal.detener) {
       nota.detener = true;
       detenido = true;
@@ -1867,11 +1876,12 @@ function indiceDebeAdelantar_(nota, ahora) {
 }
 
 /**
- * En cuántos ms programar la parte siguiente para que arranque poco después
- * del fin previsto de la que corre.
+ * En cuántos ms programar la parte siguiente: cuando la que corre deja de
+ * revisar filas (su presupuesto menos el margen final). Google suele
+ * dispararla unos segundos tarde; si llega antes, espera su turno.
  */
 function indiceRetrasoAdelanto_(nota, ahora) {
-  var fin = (nota.parteIniciadaEn || ahora) + INDICE_BUSQUEDA.PRESUPUESTO_MS + INDICE_BUSQUEDA.MARGEN_ADELANTO_MS;
+  var fin = (nota.parteIniciadaEn || ahora) + INDICE_BUSQUEDA.PRESUPUESTO_MS - INDICE_BUSQUEDA.MARGEN_FILA_MS;
   return Math.max(REINTENTOS_CONFIG.DELAY_TRIGGER_MS, fin - ahora);
 }
 
