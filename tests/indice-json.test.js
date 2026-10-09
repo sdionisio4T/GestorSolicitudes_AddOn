@@ -126,10 +126,13 @@ test('raiz leida de una vez da lo mismo que carpeta por carpeta (Drive falso)', 
     { id: ID('x'), name: 'nota.txt', mimeType: 'text/plain', parents: [ID('c1')] }
   ];
   const consultas = [];
+  const corporas = [];
+  let driveId = 'unidad';
   gs.Drive = { Files: {
-    get: () => ({ id: R, driveId: 'unidad' }),
+    get: () => ({ id: R, driveId }),
     list: (p) => {
       consultas.push(p.q);
+      corporas.push(p.corpora);
       let r;
       const padre = /^'([^']+)' in parents/.exec(p.q);
       if (padre) r = items.filter((i) => i.parents[0] === padre[1]);
@@ -150,6 +153,12 @@ test('raiz leida de una vez da lo mismo que carpeta por carpeta (Drive falso)', 
     assert.strictEqual(rapido.completo, true);
     assert.strictEqual(consultasLento, 6);
     assert.strictEqual(consultas.length - consultasLento, 2);
+    assert.deepStrictEqual(corporas.slice(-2), ['drive', 'drive']);
+    // Raiz en Mi unidad: tambien de una vez, sobre los archivos del usuario.
+    driveId = undefined;
+    const miUnidad = plano(gs.indiceRecorrerRaiz_(R, sinLimite, null, null));
+    assert.deepStrictEqual(orden(miUnidad), orden(lento));
+    assert.deepStrictEqual(corporas.slice(-2), ['user', 'user']);
   } finally {
     gs.INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ = true;
   }

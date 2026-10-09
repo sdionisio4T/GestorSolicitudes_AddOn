@@ -180,20 +180,6 @@ function buildHomepageCard(messageIdVolver, messageIdDetectar, activo) {
             )
         )
     )
-    // ── Prueba temporal: la búsqueda de JSON es del Sheet; esta entrada en
-    // Gmail sirve solo para comprobar si desde aquí el activador se
-    // encadena solo. Se quita después de la prueba.
-    .addSection(
-      CardService.newCardSection()
-        .setHeader('🧪 Prueba: JSON de las solicitudes desde Gmail')
-        .addWidget(CardService.newTextParagraph().setText(
-          '<i>Temporal. La búsqueda trabaja sobre el Sheet configurado.</i>'))
-        .addWidget(
-          CardService.newTextButton()
-            .setText('Abrir')
-            .setOnClickAction(CardService.newAction().setFunctionName('onAbrirBusquedaJson'))
-        )
-    )
     .build();
 }
 

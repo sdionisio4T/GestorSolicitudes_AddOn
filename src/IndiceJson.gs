@@ -25,8 +25,8 @@ var INDICE_CONFIG = {
   BLOQUE_N: 40,
   // Si la parte programada no arrancó en este tiempo, la tarjeta lo avisa.
   ESPERA_ACTIVADOR_MS: 90000,
-  // Raíz en unidad compartida: leer todas sus carpetas y archivos con pocas
-  // consultas sobre la unidad entera en vez de una consulta por carpeta. En
+  // Leer todas las carpetas y archivos de la unidad de la raíz (compartida o
+  // Mi unidad) con pocas consultas en vez de una consulta por carpeta. En
   // false se usa siempre el recorrido carpeta por carpeta.
   LEER_RAIZ_DE_UNA_VEZ: true
 };
@@ -1068,19 +1068,24 @@ function indiceArbolDeUnidad_(raizId, driveId, carpetasUnidad, archivosUnidad) {
 }
 
 /**
- * Todas las páginas de una consulta sobre la unidad compartida.
- * Devuelve { items, incompleta }.
+ * Todas las páginas de una consulta sobre la unidad compartida de la raíz
+ * o, si la raíz está en Mi unidad (driveId vacío), sobre los archivos del
+ * usuario. Devuelve { items, incompleta }.
  */
 function indiceListarUnidad_(driveId, q, campos) {
   var params = {
     q: q,
     fields: 'nextPageToken,incompleteSearch,files(' + campos + ')',
     pageSize: 1000,
-    corpora: 'drive',
-    driveId: driveId,
     supportsAllDrives: true,
     includeItemsFromAllDrives: true
   };
+  if (driveId) {
+    params.corpora = 'drive';
+    params.driveId = driveId;
+  } else {
+    params.corpora = 'user';
+  }
   var items = [];
   var incompleta = false;
   var token = null;
@@ -1095,10 +1100,10 @@ function indiceListarUnidad_(driveId, q, campos) {
 }
 
 /**
- * Lee la raíz con dos listados de la unidad compartida entera: carpetas y
- * archivos. Devuelve el mapa, o null si no se pudo o Drive avisó que el
- * resultado puede venir incompleto (entonces se recorre carpeta por
- * carpeta).
+ * Lee la raíz con dos listados de la unidad entera (la compartida o Mi
+ * unidad): carpetas y archivos. Devuelve el mapa, o null si no se pudo o
+ * Drive avisó que el resultado puede venir incompleto (entonces se recorre
+ * carpeta por carpeta).
  */
 function indiceLeerRaizDeUnaVez_(raizId, driveId) {
   try {
@@ -1111,8 +1116,8 @@ function indiceLeerRaizDeUnaVez_(raizId, driveId) {
       console.warn('[Indice] Drive avisó que el listado de la unidad puede venir incompleto; se recorre carpeta por carpeta');
       return null;
     }
-    console.log('[Indice] Unidad leída de una vez: ' + carpetas.items.length + ' carpetas y ' +
-      archivos.items.length + ' archivos en toda la unidad');
+    console.log('[Indice] ' + (driveId ? 'Unidad compartida' : 'Mi unidad') + ' leída de una vez: ' +
+      carpetas.items.length + ' carpetas y ' + archivos.items.length + ' archivos en toda la unidad');
     return indiceArbolDeUnidad_(raizId, driveId, carpetas.items, archivos.items);
   } catch (err) {
     console.warn('[Indice] No se pudo leer la unidad de una vez (' + err.message + '); se recorre carpeta por carpeta');
@@ -1121,8 +1126,8 @@ function indiceLeerRaizDeUnaVez_(raizId, driveId) {
 }
 
 /**
- * Lee toda la raíz y la deja en memoria. En unidad compartida, de una vez
- * (indiceLeerRaizDeUnaVez_); si no se puede, una carpeta por consulta.
+ * Lee toda la raíz y la deja en memoria: de una vez (indiceLeerRaizDeUnaVez_)
+ * y, si no se puede, una carpeta por consulta.
  * Si Drive pide esperar, espera y reintenta la misma carpeta.
  * alAvanzar(carpetasLeidas) se llama cada pocos segundos; si devuelve true
  * (alguien pidió detener), el recorrido para.
@@ -1135,10 +1140,11 @@ function indiceRecorrerRaiz_(raizId, quedaMs, alAvanzar, parcial) {
   if (driveId === null || driveId === undefined) {
     driveId = Drive.Files.get(raizId, { fields: 'id,driveId', supportsAllDrives: true }).driveId || '';
   }
-  if (!parcial && driveId && INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ) {
+  if (!parcial && INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ) {
     var deUnaVez = indiceLeerRaizDeUnaVez_(raizId, driveId);
     if (deUnaVez) return deUnaVez;
   }
+  console.log('[Indice] Raíz leída carpeta por carpeta');
   var arbol = {
     raizId: raizId,
     driveId: driveId,
