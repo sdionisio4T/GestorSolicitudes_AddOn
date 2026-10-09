@@ -24,7 +24,11 @@ var INDICE_CONFIG = {
   // suelta para no frenar los envíos de los demás.
   BLOQUE_N: 40,
   // Si la parte programada no arrancó en este tiempo, la tarjeta lo avisa.
-  ESPERA_ACTIVADOR_MS: 90000
+  ESPERA_ACTIVADOR_MS: 90000,
+  // Raíz en unidad compartida: leer todas sus carpetas y archivos con pocas
+  // consultas sobre la unidad entera en vez de una consulta por carpeta. En
+  // false se usa siempre el recorrido carpeta por carpeta.
+  LEER_RAIZ_DE_UNA_VEZ: true
 };
 
 // ── Utilidades ────────────────────────────────────────────────────────
@@ -1022,7 +1026,103 @@ function indiceElegirFilas_(filas, modo, desdeFila, carpetaDe) {
 }
 
 /**
- * Recorre toda la raíz, una carpeta por consulta, y la deja en memoria.
+ * Mapa de la raíz a partir del listado de toda la unidad compartida (solo
+ * calcula). Se queda con las carpetas que cuelgan de la raíz y los .json
+ * que están en la raíz o en esas carpetas, con la misma forma que el
+ * recorrido carpeta por carpeta.
+ *   carpetasUnidad: [{ id, name, parents }]
+ *   archivosUnidad: [{ id, name, parents, modifiedTime, md5Checksum }]
+ */
+function indiceArbolDeUnidad_(raizId, driveId, carpetasUnidad, archivosUnidad) {
+  var datos = {};
+  carpetasUnidad.forEach(function(f) {
+    datos[f.id] = [f.name, (f.parents || [])[0] || ''];
+  });
+  var cuelga = {};
+  function cuelgaDeRaiz(id) {
+    var camino = [];
+    var actual = id;
+    var res = false;
+    while (camino.length <= 60) {
+      if (actual === raizId) { res = true; break; }
+      if (cuelga[actual] !== undefined) { res = cuelga[actual]; break; }
+      if (!datos[actual]) break;
+      camino.push(actual);
+      actual = datos[actual][1];
+    }
+    camino.forEach(function(c) { cuelga[c] = res; });
+    return res;
+  }
+
+  var arbol = { raizId: raizId, driveId: driveId, carpetas: {}, jsons: [], errores: 0, completo: true, detenido: false, cola: [] };
+  Object.keys(datos).forEach(function(id) {
+    if (id !== raizId && cuelgaDeRaiz(id)) arbol.carpetas[id] = datos[id];
+  });
+  archivosUnidad.forEach(function(f) {
+    if (!/\.json$/i.test(f.name || '')) return;
+    var padre = (f.parents || [])[0];
+    if (padre !== raizId && !arbol.carpetas[padre]) return;
+    arbol.jsons.push([f.id, f.name, padre, f.modifiedTime || '', f.md5Checksum || '']);
+  });
+  return arbol;
+}
+
+/**
+ * Todas las páginas de una consulta sobre la unidad compartida.
+ * Devuelve { items, incompleta }.
+ */
+function indiceListarUnidad_(driveId, q, campos) {
+  var params = {
+    q: q,
+    fields: 'nextPageToken,incompleteSearch,files(' + campos + ')',
+    pageSize: 1000,
+    corpora: 'drive',
+    driveId: driveId,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  };
+  var items = [];
+  var incompleta = false;
+  var token = null;
+  do {
+    if (token) params.pageToken = token;
+    var resp = Drive.Files.list(params);
+    if (resp.incompleteSearch) incompleta = true;
+    items = items.concat(resp.files || []);
+    token = resp.nextPageToken;
+  } while (token);
+  return { items: items, incompleta: incompleta };
+}
+
+/**
+ * Lee la raíz con dos listados de la unidad compartida entera: carpetas y
+ * archivos. Devuelve el mapa, o null si no se pudo o Drive avisó que el
+ * resultado puede venir incompleto (entonces se recorre carpeta por
+ * carpeta).
+ */
+function indiceLeerRaizDeUnaVez_(raizId, driveId) {
+  try {
+    var carpetas = indiceListarUnidad_(driveId,
+      "mimeType = '" + INDICE_CONFIG.CARPETA_MIME + "' and trashed = false", 'id,name,parents');
+    var archivos = indiceListarUnidad_(driveId,
+      "mimeType != '" + INDICE_CONFIG.CARPETA_MIME + "' and trashed = false",
+      'id,name,parents,modifiedTime,md5Checksum');
+    if (carpetas.incompleta || archivos.incompleta) {
+      console.warn('[Indice] Drive avisó que el listado de la unidad puede venir incompleto; se recorre carpeta por carpeta');
+      return null;
+    }
+    console.log('[Indice] Unidad leída de una vez: ' + carpetas.items.length + ' carpetas y ' +
+      archivos.items.length + ' archivos en toda la unidad');
+    return indiceArbolDeUnidad_(raizId, driveId, carpetas.items, archivos.items);
+  } catch (err) {
+    console.warn('[Indice] No se pudo leer la unidad de una vez (' + err.message + '); se recorre carpeta por carpeta');
+    return null;
+  }
+}
+
+/**
+ * Lee toda la raíz y la deja en memoria. En unidad compartida, de una vez
+ * (indiceLeerRaizDeUnaVez_); si no se puede, una carpeta por consulta.
  * Si Drive pide esperar, espera y reintenta la misma carpeta.
  * alAvanzar(carpetasLeidas) se llama cada pocos segundos; si devuelve true
  * (alguien pidió detener), el recorrido para.
@@ -1034,6 +1134,10 @@ function indiceRecorrerRaiz_(raizId, quedaMs, alAvanzar, parcial) {
   var driveId = parcial ? parcial.driveId : null;
   if (driveId === null || driveId === undefined) {
     driveId = Drive.Files.get(raizId, { fields: 'id,driveId', supportsAllDrives: true }).driveId || '';
+  }
+  if (!parcial && driveId && INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ) {
+    var deUnaVez = indiceLeerRaizDeUnaVez_(raizId, driveId);
+    if (deUnaVez) return deUnaVez;
   }
   var arbol = {
     raizId: raizId,

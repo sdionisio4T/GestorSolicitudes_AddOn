@@ -70,6 +70,91 @@ function arbolPorCaso() {
   };
 }
 
+test('raiz leida de una vez: solo lo que cuelga de la raiz, con la forma del recorrido', () => {
+  const R = ID('raizU');
+  const f = (id, name, padre) => ({ id: ID(id), name, parents: [padre === null ? R : ID(padre)] });
+  const carpetas = [
+    { id: R, name: 'Raiz', parents: [ID('unidad')] },
+    f('pagos', 'Pagos', null),
+    f('c1', '9300', 'pagos'),
+    f('sub', 'v1.0', 'c1'),
+    { id: ID('otra'), name: 'Otra cosa', parents: [ID('unidad')] },
+    f('fuera', '9300', 'otra'),
+    // Ciclo raro fuera de la raiz: no debe colgar el calculo.
+    { id: ID('ca'), name: 'A', parents: [ID('cb')] },
+    { id: ID('cb'), name: 'B', parents: [ID('ca')] }
+  ];
+  const archivos = [
+    { ...f('j1', 'config.json', 'c1'), modifiedTime: '2026-09-01T00:00:00Z', md5Checksum: 'A' },
+    { ...f('j2', 'otro.JSON', 'sub') },
+    { ...f('j3', 'suelto.json', null) },
+    f('pdf', 'manual.pdf', 'c1'),
+    f('jf', 'config.json', 'fuera')
+  ];
+  const a = plano(gs.indiceArbolDeUnidad_(R, 'unidad', carpetas, archivos));
+  assert.deepStrictEqual(a.carpetas, {
+    [ID('pagos')]: ['Pagos', R],
+    [ID('c1')]: ['9300', ID('pagos')],
+    [ID('sub')]: ['v1.0', ID('c1')]
+  });
+  assert.deepStrictEqual(a.jsons, [
+    [ID('j1'), 'config.json', ID('c1'), '2026-09-01T00:00:00Z', 'A'],
+    [ID('j2'), 'otro.JSON', ID('sub'), '', ''],
+    [ID('j3'), 'suelto.json', R, '', '']
+  ]);
+  assert.strictEqual(a.completo, true);
+  assert.deepStrictEqual(a.cola, []);
+  // El directorio por caso sale igual que con el recorrido.
+  const dir = gs.indiceDirectorioPorCaso_(gs.indiceArbolDeUnidad_(R, 'unidad', carpetas, archivos));
+  assert.strictEqual(dir.porCaso['9300'].jsons.length, 2);
+});
+
+test('raiz leida de una vez da lo mismo que carpeta por carpeta (Drive falso)', () => {
+  const R = ID('raizD');
+  const CARP = 'application/vnd.google-apps.folder';
+  const items = [
+    { id: R, name: 'Raiz', mimeType: CARP, parents: ['unidad'] },
+    { id: ID('apim'), name: 'APIM', mimeType: CARP, parents: [R] },
+    { id: ID('srv'), name: 'Pagos', mimeType: CARP, parents: [ID('apim')] },
+    { id: ID('c1'), name: '7799', mimeType: CARP, parents: [ID('srv')] },
+    { id: ID('c1v'), name: 'v1.0.1', mimeType: CARP, parents: [ID('c1')] },
+    { id: ID('c2'), name: '7445_2', mimeType: CARP, parents: [R] },
+    { id: ID('otra'), name: 'Fuera', mimeType: CARP, parents: ['unidad'] },
+    { id: ID('j1'), name: 'a.json', mimeType: 'application/json', parents: [ID('c1v')], modifiedTime: 't1', md5Checksum: 'A' },
+    { id: ID('j2'), name: 'b.json', mimeType: 'text/plain', parents: [ID('c2')], modifiedTime: 't2', md5Checksum: 'B' },
+    { id: ID('j3'), name: 'c.json', mimeType: 'application/json', parents: [ID('otra')] },
+    { id: ID('x'), name: 'nota.txt', mimeType: 'text/plain', parents: [ID('c1')] }
+  ];
+  const consultas = [];
+  gs.Drive = { Files: {
+    get: () => ({ id: R, driveId: 'unidad' }),
+    list: (p) => {
+      consultas.push(p.q);
+      let r;
+      const padre = /^'([^']+)' in parents/.exec(p.q);
+      if (padre) r = items.filter((i) => i.parents[0] === padre[1]);
+      else if (p.q.startsWith('mimeType = ')) r = items.filter((i) => i.mimeType === CARP);
+      else r = items.filter((i) => i.mimeType !== CARP);
+      return { files: r };
+    }
+  } };
+  const orden = (a) => ({ carpetas: a.carpetas, jsons: [...a.jsons].sort((x, y) => x[0].localeCompare(y[0])) });
+  const sinLimite = () => 60000;
+  try {
+    gs.INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ = false;
+    const lento = plano(gs.indiceRecorrerRaiz_(R, sinLimite, null, null));
+    const consultasLento = consultas.length;
+    gs.INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ = true;
+    const rapido = plano(gs.indiceRecorrerRaiz_(R, sinLimite, null, null));
+    assert.deepStrictEqual(orden(rapido), orden(lento));
+    assert.strictEqual(rapido.completo, true);
+    assert.strictEqual(consultasLento, 6);
+    assert.strictEqual(consultas.length - consultasLento, 2);
+  } finally {
+    gs.INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ = true;
+  }
+});
+
 test('numeros de caso en nombres de carpeta: completos y sin el sufijo _N', () => {
   const n = (s) => plano(gs.indiceNumerosEnNombre_(s));
   assert.deepStrictEqual(n('9300'), ['9300']);
