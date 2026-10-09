@@ -817,10 +817,15 @@ function indiceEscribirSinFila_(ss, lista) {
 
 var INDICE_BUSQUEDA = {
   PREFIJO_NOTA: 'INDICE_NOTA_',
-  MARGEN_FILA_MS: 15000,
+  // Tiempo que se reserva al final de una parte para escribir lo último y
+  // guardar la nota: Google corta la ejecución a los 6 minutos sin aviso.
+  MARGEN_FILA_MS: 30000,
   REINTENTOS_LOCK: 3,
   HANDLER: 'continuarBusquedaJson',
-  PRESUPUESTO_MS: 5 * 60 * 1000,
+  PRESUPUESTO_MS: 4 * 60 * 1000 + 30000,
+  // Cada cuánto se guarda el avance en la nota mientras corre una parte, y
+  // se revisa si alguien pidió detener.
+  AVISO_AVANCE_MS: 15000,
   MAX_PARTES: 20,
   // Si Google rechaza programar la parte siguiente por el límite de una vez
   // por hora, se programa para dentro de este tiempo.
@@ -839,6 +844,80 @@ function indiceLeerNota_(sheetId) {
 
 function indiceGuardarNota_(sheetId, nota) {
   PropertiesService.getScriptProperties().setProperty(INDICE_BUSQUEDA.PREFIJO_NOTA + sheetId, JSON.stringify(nota));
+}
+
+// ── Mapa de la raíz en la caché ───────────────────────────────────────
+//
+// Leer toda la carpeta raíz toma minutos. La primera parte de una búsqueda
+// la lee y deja el mapa (carpetas y .json) en la caché del script: memoria
+// temporal de Google, invisible, que se borra sola (a las 6 horas como
+// máximo). Las partes siguientes de la misma búsqueda lo toman de ahí y usan
+// su tiempo en las filas. Si la lectura no termina en una parte, se guarda
+// a medias y la siguiente sigue desde ahí. Cada búsqueda nueva lee la raíz
+// de nuevo. Si Google borra la caché antes, simplemente se vuelve a leer.
+
+// Marca interna: la parte terminó leyendo la raíz y no llegó a las filas.
+var INDICE_MAPA_A_MEDIAS = { mapaAMedias: true };
+
+var INDICE_MAPA = {
+  PREFIJO: 'INDICE_MAPA_',
+  // Una entrada de la caché admite hasta 100 KB: se parte en trozos con
+  // margen por los caracteres que ocupan más de un byte.
+  TROZO: 40000,
+  DURACION_S: 6 * 60 * 60
+};
+
+function indiceGuardarMapa_(sheetId, arbol, busquedaId) {
+  try {
+    var texto = JSON.stringify({
+      busquedaId: busquedaId,
+      raizId: arbol.raizId,
+      driveId: arbol.driveId,
+      completo: arbol.completo,
+      carpetas: arbol.carpetas,
+      jsons: arbol.jsons,
+      cola: arbol.cola || [],
+      errores: arbol.errores
+    });
+    var entradas = {};
+    var n = 0;
+    for (var i = 0; i < texto.length; i += INDICE_MAPA.TROZO) {
+      entradas[INDICE_MAPA.PREFIJO + sheetId + '_' + n] = texto.substring(i, i + INDICE_MAPA.TROZO);
+      n++;
+    }
+    entradas[INDICE_MAPA.PREFIJO + sheetId] = String(n);
+    CacheService.getScriptCache().putAll(entradas, INDICE_MAPA.DURACION_S);
+    return true;
+  } catch (err) {
+    console.warn('[Indice] No se pudo guardar el mapa en la caché: ' + err.message);
+    return false;
+  }
+}
+
+/**
+ * Mapa guardado de esta misma búsqueda y raíz, o null si no hay (nunca se
+ * guardó, es de otra búsqueda o Google lo borró).
+ */
+function indiceLeerMapa_(sheetId, raizId, busquedaId) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var n = parseInt(cache.get(INDICE_MAPA.PREFIJO + sheetId), 10);
+    if (!n) return null;
+    var claves = [];
+    for (var i = 0; i < n; i++) claves.push(INDICE_MAPA.PREFIJO + sheetId + '_' + i);
+    var trozos = cache.getAll(claves);
+    var texto = '';
+    for (var k = 0; k < claves.length; k++) {
+      if (trozos[claves[k]] === undefined || trozos[claves[k]] === null) return null;
+      texto += trozos[claves[k]];
+    }
+    var mapa = JSON.parse(texto);
+    if (mapa.busquedaId !== busquedaId || mapa.raizId !== raizId) return null;
+    return mapa;
+  } catch (err) {
+    console.warn('[Indice] No se pudo leer el mapa de la caché: ' + err.message);
+    return null;
+  }
 }
 
 /**
@@ -910,16 +989,43 @@ function indiceElegirFilas_(filas, modo, desdeFila, carpetaDe) {
 /**
  * Recorre toda la raíz, una carpeta por consulta, y la deja en memoria.
  * Si Drive pide esperar, espera y reintenta la misma carpeta.
+ * alAvanzar(carpetasLeidas) se llama cada pocos segundos; si devuelve true
+ * (alguien pidió detener), el recorrido para.
+ * parcial: un mapa a medias de una parte anterior (con su cola de carpetas
+ * por revisar); el recorrido sigue desde ahí. Si no se termina, el mapa
+ * devuelto trae en `cola` lo que faltó.
  */
-function indiceRecorrerRaiz_(raizId, quedaMs) {
-  var raiz = Drive.Files.get(raizId, { fields: 'id,driveId', supportsAllDrives: true });
-  var arbol = { raizId: raizId, carpetas: {}, jsons: [], errores: 0, completo: true };
-  var cola = [raizId];
+function indiceRecorrerRaiz_(raizId, quedaMs, alAvanzar, parcial) {
+  var driveId = parcial ? parcial.driveId : null;
+  if (driveId === null || driveId === undefined) {
+    driveId = Drive.Files.get(raizId, { fields: 'id,driveId', supportsAllDrives: true }).driveId || '';
+  }
+  var arbol = {
+    raizId: raizId,
+    driveId: driveId,
+    carpetas: parcial ? parcial.carpetas : {},
+    jsons: parcial ? parcial.jsons : [],
+    errores: parcial ? parcial.errores || 0 : 0,
+    completo: true,
+    detenido: false
+  };
+  var raiz = { driveId: driveId };
+  var cola = parcial ? parcial.cola.slice() : [raizId];
+  arbol.cola = cola;
   var esperas = 0;
+  var ultimoAviso = Date.now();
   while (cola.length > 0) {
     if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
       arbol.completo = false;
       break;
+    }
+    if (alAvanzar && Date.now() - ultimoAviso > INDICE_BUSQUEDA.AVISO_AVANCE_MS) {
+      ultimoAviso = Date.now();
+      if (alAvanzar(Object.keys(arbol.carpetas).length)) {
+        arbol.completo = false;
+        arbol.detenido = true;
+        break;
+      }
     }
     var carpetaId = cola.shift();
     var hijos;
@@ -1016,21 +1122,64 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
 
   var cuenta = nota.cuenta;
   var cortado = false;
+  var detenido = false;
+  // Guarda el avance en la nota para que la tarjeta lo muestre mientras
+  // corre. Devuelve true si alguien pidió detener.
+  var avisar = function(paso, carpetas) {
+    var guardada = indiceLeerNota_(sheetId);
+    if (guardada && guardada.detener) return true;
+    nota.avance = { paso: paso, carpetas: carpetas, en: Date.now() };
+    nota.cuenta = cuenta;
+    indiceGuardarNota_(sheetId, nota);
+    return false;
+  };
   try {
+    // Mapa de la raíz: de la caché si esta búsqueda ya lo leyó; si no, se
+    // lee (o se sigue leyendo desde donde quedó la parte anterior).
     var inicioRaiz = Date.now();
-    var arbol = indiceRecorrerRaiz_(raizId, quedaMs);
-    console.log('[Indice] Raíz recorrida: ' + Object.keys(arbol.carpetas).length + ' carpetas, ' +
-      arbol.jsons.length + ' JSON, en ' + formatearDuracionIndice_(Date.now() - inicioRaiz) +
-      (arbol.completo ? '' : ' (incompleta)'));
-    if (!arbol.completo) {
-      throw new Error('La carpeta raíz es demasiado grande para recorrerla en una parte (se revisaron ' +
-        Object.keys(arbol.carpetas).length + ' carpetas en ' + formatearDuracionIndice_(Date.now() - inicioRaiz) +
-        '). Avisar para ajustar la búsqueda.');
+    var guardado = indiceLeerMapa_(sheetId, raizId, nota.iniciadoEn);
+    var arbol;
+    if (guardado && guardado.completo) {
+      arbol = guardado;
+      console.log('[Indice] Mapa de la raíz tomado de la caché: ' + Object.keys(arbol.carpetas).length +
+        ' carpetas, ' + arbol.jsons.length + ' JSON');
+    } else {
+      var carpetasAntes = guardado ? Object.keys(guardado.carpetas).length : 0;
+      arbol = indiceRecorrerRaiz_(raizId, quedaMs, function(n) { return avisar('raiz', n); }, guardado);
+      var carpetasAhora = Object.keys(arbol.carpetas).length;
+      console.log('[Indice] Raíz ' + (guardado ? 'seguida desde la parte anterior' : 'recorrida') + ': ' +
+        carpetasAhora + ' carpetas, ' + arbol.jsons.length + ' JSON, en ' +
+        formatearDuracionIndice_(Date.now() - inicioRaiz) +
+        (arbol.completo ? '' : ' (faltan ' + arbol.cola.length + ' carpetas por revisar)'));
+      var mapaGuardado = indiceGuardarMapa_(sheetId, arbol, nota.iniciadoEn);
+      nota.mapaCarpetas = carpetasAhora;
+      // Leer más del mapa y dejarlo en la caché es avance: la parte siguiente
+      // lo aprovecha aunque a esta no le alcance el tiempo para las filas.
+      if (mapaGuardado && carpetasAhora > carpetasAntes) nota.progreso = (nota.progreso || 0) + 1;
+      if (arbol.detenido) {
+        detenido = true;
+        throw new Error('Detenida a pedido mientras se leía la carpeta raíz.');
+      }
+      if (!arbol.completo) {
+        // Lectura a medias: queda en la caché y la parte siguiente sigue.
+        // Sin caché no se puede seguir: cada parte empezaría de cero.
+        if (!mapaGuardado) {
+          throw new Error('La carpeta raíz no alcanza a leerse en una parte (' + carpetasAhora +
+            ' carpetas) y no se pudo guardar el avance en la caché de Google.');
+        }
+        throw INDICE_MAPA_A_MEDIAS;
+      }
     }
+    nota.mapaCarpetas = Object.keys(arbol.carpetas).length;
     cuenta.erroresDrive = arbol.errores;
     var directorio = indiceDirectorioPorCaso_(arbol);
     var filas = indiceLeerFilasCompletas_(hoja);
     nota.ultimaFila = filas.length ? filas[filas.length - 1].fila : 0;
+    if (avisar('filas', Object.keys(arbol.carpetas).length)) {
+      detenido = true;
+      throw new Error('Detenida a pedido.');
+    }
+    var ultimoAviso = Date.now();
 
     var lista = indiceElegirFilas_(filas, modo, nota.fila, function(f) {
       return indiceCarpetaDeFila_(f, arbol, directorio);
@@ -1045,6 +1194,7 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
       for (var intento = 0; intento < INDICE_BUSQUEDA.REINTENTOS_LOCK; intento++) {
         if (indiceEscribirBloqueFilas_(ss, bloque, cuenta, modo === 'revisar')) {
           nota.filaActual = bloque[bloque.length - 1].fila;
+          nota.progreso = (nota.progreso || 0) + 1;
           if (modo === 'revisar') nota.fila = nota.filaActual + 1;
           bloque = [];
           return true;
@@ -1058,6 +1208,14 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
       if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
         cortado = true;
         break;
+      }
+      if (Date.now() - ultimoAviso > INDICE_BUSQUEDA.AVISO_AVANCE_MS) {
+        ultimoAviso = Date.now();
+        if (avisar('filas', Object.keys(arbol.carpetas).length)) {
+          detenido = true;
+          cortado = true;
+          break;
+        }
       }
       var item = lista[k];
       var resultado = null;
@@ -1097,18 +1255,33 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
       nota.fila = 0;
     }
   } catch (err) {
-    console.error('[Indice] Error en la búsqueda: ' + err.message);
-    nota.ultimoError = String(err.message || err).substring(0, 300);
+    if (err === INDICE_MAPA_A_MEDIAS) {
+      console.log('[Indice] La lectura de la carpeta raíz sigue en la parte siguiente');
+    } else if (detenido) {
+      console.log('[Indice] ' + err.message);
+    } else {
+      console.error('[Indice] Error en la búsqueda: ' + err.message);
+      nota.ultimoError = String(err.message || err).substring(0, 300);
+    }
     cortado = true;
   } finally {
+    // Si alguien pidió detener mientras corría, no se pisa ese pedido.
+    var guardadaAlFinal = indiceLeerNota_(sheetId);
+    if (guardadaAlFinal && guardadaAlFinal.detener) {
+      nota.detener = true;
+      detenido = true;
+    }
     nota.ocupadoHasta = 0;
+    nota.parteTerminadaEn = Date.now();
+    nota.avance = null;
     nota.cuenta = cuenta;
     indiceGuardarNota_(sheetId, nota);
   }
 
   console.log('[Indice] Búsqueda (' + modo + '), parte ' + nota.partes + ': hasta la fila ' +
-    nota.filaActual + ' de ' + nota.ultimaFila + (cortado ? ', sigue en otra parte' : ', terminada'));
-  return { terminado: !cortado && !nota.ultimoError, nota: nota, cuenta: cuenta };
+    nota.filaActual + ' de ' + nota.ultimaFila +
+    (detenido ? ', detenida a pedido' : cortado ? ', sigue en otra parte' : ', terminada'));
+  return { terminado: !cortado && !nota.ultimoError, detenido: detenido, nota: nota, cuenta: cuenta };
 }
 
 // ── Activadores de la búsqueda ────────────────────────────────────────
@@ -1149,6 +1322,7 @@ function indicePrepararBusqueda_(sheetId, modo) {
       };
     }
     nota.activador = null;
+    nota.detener = false;
     indiceGuardarNota_(sheetId, nota);
     return { nota: nota };
   } finally {
@@ -1245,16 +1419,19 @@ function indiceProgramarBusqueda_(sheetId, desde) {
 /**
  * Qué hacer al final de una parte (solo calcula):
  *   'nada'      terminó, u otra parte tiene el turno y programará ella
- *   'programar' quedan filas y la parte avanzó
- *   'parar'     se llegó al tope de partes, o la parte no avanzó
+ *   'programar' queda trabajo y la parte avanzó (escribió filas o leyó más
+ *               de la carpeta raíz)
+ *   'parar'     se pidió detener, se llegó al tope de partes, o no avanzó
+ * progresoAntes: el contador de avance de la nota antes de la parte.
  */
-function indiceDecidirSiguiente_(res, filaAntes, maxPartes) {
+function indiceDecidirSiguiente_(res, progresoAntes, maxPartes) {
   if (!res || res.ocupado || res.terminado || res.sinBusqueda) return { accion: 'nada' };
   var nota = res.nota || {};
+  if (res.detenido || nota.detener) return { accion: 'parar', motivo: 'Detenida a pedido.' };
   if (nota.partes >= maxPartes) {
     return { accion: 'parar', motivo: 'Se llegó al tope de ' + maxPartes + ' partes.' };
   }
-  if (nota.filaActual === filaAntes) {
+  if ((nota.progreso || 0) === (progresoAntes || 0)) {
     return {
       accion: 'parar',
       motivo: nota.ultimoError
@@ -1291,7 +1468,7 @@ function continuarBusquedaJson(e) {
     return;
   }
 
-  var filaAntes = nota.filaActual;
+  var progresoAntes = nota.progreso || 0;
   var res;
   try {
     res = indiceCorrerBusqueda_(sheetId, INDICE_BUSQUEDA.PRESUPUESTO_MS, nota.modo);
@@ -1302,7 +1479,7 @@ function continuarBusquedaJson(e) {
   if (res.ocupado) console.log('[Indice] Otra parte tiene el turno; esta termina sin hacer nada');
 
   indiceBorrarActivadorActual_(e);
-  var decision = indiceDecidirSiguiente_(res, filaAntes, INDICE_BUSQUEDA.MAX_PARTES);
+  var decision = indiceDecidirSiguiente_(res, progresoAntes, INDICE_BUSQUEDA.MAX_PARTES);
   if (decision.accion === 'programar') {
     indiceProgramarBusqueda_(sheetId, 'activador');
   } else if (decision.accion === 'parar') {
@@ -1392,10 +1569,12 @@ function buildBusquedaJsonCard_() {
     return '<font color="#d93025">' + html + '</font>';
   }
 
-  var corriendo = !!(nota && nota.ocupadoHasta > ahora);
+  var cortada = indiceParteCortada_(nota, ahora);
+  var corriendo = !!(nota && nota.ocupadoHasta > ahora) && !cortada;
   var avance = nota && nota.partes > 0
     ? 'Va en la fila <b>' + (nota.filaActual || 0) + '</b> de ' + (nota.ultimaFila || '?') +
-      ' · parte ' + nota.partes + ' · ' + INDICE_NOMBRE_MODO[nota.modo]
+      ' · parte ' + nota.partes + ' · ' + INDICE_NOMBRE_MODO[nota.modo] +
+      (nota.mapaCarpetas ? '<br>Mapa del Drive: ' + nota.mapaCarpetas + ' carpetas leídas' : '')
     : (nota ? INDICE_NOMBRE_MODO[nota.modo] : '');
 
   if (!nota) {
@@ -1405,9 +1584,29 @@ function buildBusquedaJsonCard_() {
     boton('Buscar JSON', 'onBuscarJson', true);
     boton('Revisar avisos', 'onRevisarAvisosJson', false);
   } else if (corriendo) {
+    var paso;
+    if (nota.detener) {
+      paso = '🛑 <b>Deteniendo</b>: la parte para en unos segundos y guarda lo hecho.';
+    } else if (nota.avance && nota.avance.paso === 'raiz') {
+      paso = 'Paso 1 de 2: leyendo la carpeta raíz de Drive, <b>' + nota.avance.carpetas +
+        '</b> carpetas revisadas (actualizado a las ' + formatearHoraIndice_(nota.avance.en) + '). ' +
+        'Si no alcanza en esta parte, la siguiente sigue desde ahí.';
+    } else if (nota.avance && nota.avance.paso === 'filas') {
+      paso = 'Paso 2 de 2: revisando filas (carpeta raíz leída: ' + nota.avance.carpetas + ' carpetas).';
+    } else {
+      paso = 'Empezando: abriendo el Sheet y Drive.';
+    }
     parrafo('⏳ <b>Buscando</b>: la parte ' + nota.partes + ' empezó a las ' +
-      formatearHoraIndice_(nota.parteIniciadaEn) + ' (hace ' + formatearDuracionIndice_(ahora - nota.parteIniciadaEn) + ').<br>' + avance);
+      formatearHoraIndice_(nota.parteIniciadaEn) + ' (hace ' + formatearDuracionIndice_(ahora - nota.parteIniciadaEn) + ').<br>' +
+      paso + '<br>' + avance);
     boton('Ver avance', 'onVerAvanceBusquedaJson', false);
+    if (!nota.detener) boton('Detener', 'onDetenerBusquedaJson', false);
+  } else if (nota.etapa === 'buscando' && cortada) {
+    parrafo(rojo('⚠️ <b>La parte ' + nota.partes + ' empezó a las ' + formatearHoraIndice_(nota.parteIniciadaEn) +
+      ' y no terminó</b>: Google la cortó por tiempo antes de guardar.') +
+      '<br>Presiona "Continuar" para seguir desde la primera N vacía, o "Detener".<br>' + avance);
+    boton('Continuar', 'onContinuarBusquedaJson', true);
+    boton('Detener', 'onDetenerBusquedaJson', false);
   } else if (nota.etapa === 'buscando') {
     var act = nota.activador;
     var texto;
@@ -1431,10 +1630,13 @@ function buildBusquedaJsonCard_() {
     parrafo(texto + '<br>' + avance);
     if (ofrecerContinuar) boton('Continuar', 'onContinuarBusquedaJson', true);
     boton('Ver avance', 'onVerAvanceBusquedaJson', false);
+    boton('Detener', 'onDetenerBusquedaJson', false);
   } else if (nota.etapa === 'detenido') {
-    parrafo(rojo('⚠️ <b>La búsqueda se detuvo.</b> ' + escaparHtml(nota.ultimoError || '')) + '<br>' + avance);
+    parrafo(rojo('⚠️ <b>La búsqueda se detuvo.</b> ' + escaparHtml(nota.ultimoError || '')) + '<br>' + avance +
+      '<br>Lo ya escrito en las columnas N y O se queda. "Continuar" sigue desde la primera N vacía.');
     boton('Continuar', 'onContinuarBusquedaJson', true);
-    boton('Ver avance', 'onVerAvanceBusquedaJson', false);
+    boton('Buscar JSON', 'onBuscarJson', false);
+    boton('Revisar avisos', 'onRevisarAvisosJson', false);
   } else {
     parrafo('✅ <b>' + INDICE_NOMBRE_MODO[nota.modo] + ' terminó el ' + formatearFechaIndice_(nota.terminadoEn) +
       '</b>, en ' + nota.partes + ' parte' + (nota.partes === 1 ? '' : 's') + '.');
@@ -1524,12 +1726,76 @@ function indiceIniciarDesdePanel_(modo) {
   if (nota && nota.ocupadoHasta > Date.now()) {
     return 'Ya hay una búsqueda corriendo: va en la fila ' + (nota.filaActual || 0) + '.';
   }
-  if (nota && nota.modo !== modo && (nota.etapa === 'buscando' || nota.etapa === 'detenido')) {
-    return 'Hay un "' + INDICE_NOMBRE_MODO[nota.modo] + '" a medias. Termínalo primero con "Continuar".';
+  if (nota && nota.modo !== modo && nota.etapa === 'buscando' && !indiceParteCortada_(nota, Date.now())) {
+    return 'Hay un "' + INDICE_NOMBRE_MODO[nota.modo] + '" a medias. Termínalo con "Continuar" o usa "Detener".';
   }
+
+  // Revisión previa: si no hay filas que trabajar, se responde al instante
+  // sin recorrer Drive.
+  var hoja = SpreadsheetApp.openById(sheetId).getSheetByName(obtenerSheetTab());
+  if (!hoja) return 'No existe la pestaña de solicitudes configurada.';
+  if (indiceElegirFilas_(indiceLeerFilasCompletas_(hoja), modo, 0, null).length === 0) {
+    return modo === 'revisar'
+      ? 'No hay filas con aviso para revisar.'
+      : 'No hay filas con la columna N vacía: no hay nada nuevo que buscar.';
+  }
+
   var prep = indicePrepararBusqueda_(sheetId, modo);
   if (prep.ocupado) return 'Ya hay una búsqueda corriendo.';
   return INDICE_NOMBRE_MODO[modo] + ': ' + indiceTextoActivador_(indiceProgramarBusqueda_(sheetId, 'panel'));
+}
+
+/**
+ * ¿La parte que figura como corriendo ya no puede estar viva? Google corta
+ * una ejecución a los 6 minutos; pasado ese tiempo sin que la parte haya
+ * guardado su fin, se la da por cortada.
+ */
+function indiceParteCortada_(nota, ahora) {
+  if (!nota || !nota.parteIniciadaEn) return false;
+  var termino = nota.parteTerminadaEn && nota.parteTerminadaEn >= nota.parteIniciadaEn;
+  return !termino && ahora - nota.parteIniciadaEn > 6 * 60 * 1000 + 30000;
+}
+
+/**
+ * "Detener": si no hay una parte corriendo, la búsqueda queda detenida al
+ * instante; si hay una, se le pide que pare y ella guarda lo hecho en unos
+ * segundos (Google no deja cortar una ejecución desde afuera). En los dos
+ * casos se borran los activadores de la búsqueda, incluso los que quedaron
+ * inhabilitados. Lo escrito en las columnas N y O se queda.
+ */
+function onDetenerBusquedaJson(e) {
+  var aviso;
+  try {
+    var sheetId = obtenerSheetId();
+    try {
+      ScriptApp.getProjectTriggers().forEach(function(t) {
+        if (t.getHandlerFunction() === INDICE_BUSQUEDA.HANDLER) ScriptApp.deleteTrigger(t);
+      });
+    } catch (errAct) {
+      console.log('[Indice] No se pudo borrar un activador: ' + errAct.message);
+    }
+    var nota = indiceLeerNota_(sheetId);
+    var ahora = Date.now();
+    if (!nota || nota.etapa === 'terminado' || nota.etapa === 'detenido') {
+      aviso = 'No hay una búsqueda en curso.';
+    } else if (nota.ocupadoHasta > ahora && !indiceParteCortada_(nota, ahora)) {
+      indiceActualizarNota_(sheetId, { detener: true });
+      aviso = 'Deteniendo: la parte en curso para en unos segundos y guarda lo hecho.';
+    } else {
+      indiceActualizarNota_(sheetId, {
+        etapa: 'detenido',
+        detener: false,
+        ocupadoHasta: 0,
+        activador: null,
+        ultimoError: 'Detenida a pedido.'
+      });
+      aviso = 'Búsqueda detenida. Lo ya escrito en las columnas N y O se queda.';
+    }
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo detener: ' + err.message;
+  }
+  return indiceRespuestaBusqueda_(aviso);
 }
 
 function onAbrirBusquedaJson(e) {

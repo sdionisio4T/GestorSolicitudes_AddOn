@@ -304,9 +304,9 @@ test('fin de una parte: programar si avanzo, parar sin avance o al tope, nada si
   const d = (res, filaAntes) => plano(gs.indiceDecidirSiguiente_(res, filaAntes, 20));
   assert.strictEqual(d({ terminado: true, nota: { partes: 1 } }, 0).accion, 'nada');
   assert.strictEqual(d({ ocupado: true }, 0).accion, 'nada');
-  assert.strictEqual(d({ nota: { partes: 1, filaActual: 300 } }, 0).accion, 'programar');
-  assert.strictEqual(d({ nota: { partes: 20, filaActual: 300 } }, 0).accion, 'parar');
-  const sinAvance = d({ nota: { partes: 3, filaActual: 300, ultimoError: 'Drive caído' } }, 300);
+  assert.strictEqual(d({ nota: { partes: 1, progreso: 1 } }, 0).accion, 'programar');
+  assert.strictEqual(d({ nota: { partes: 20, progreso: 5 } }, 0).accion, 'parar');
+  const sinAvance = d({ nota: { partes: 3, progreso: 4, ultimoError: 'Drive caído' } }, 4);
   assert.strictEqual(sinAvance.accion, 'parar');
   assert.match(sinAvance.motivo, /Drive caído/);
 });
@@ -325,4 +325,28 @@ test('sufijo de reenvio: solo pegado a un numero y de hasta 3 digitos', () => {
   assert.strictEqual(gs.indiceQuitarSufijo_('Pagos_9300'), 'Pagos_9300');
   assert.deepStrictEqual(plano(gs.indiceNumerosEnNombre_('caso_9300')), ['9300']);
   assert.deepStrictEqual(plano(gs.indiceNumerosEnNombre_('Pagos_9300_2')), ['9300']);
+});
+
+test('parte cortada por Google: empezo hace mas de 6 minutos y no guardo su fin', () => {
+  const ahora = 10 * 60 * 1000;
+  assert.strictEqual(gs.indiceParteCortada_({ parteIniciadaEn: 0 }, ahora), false);
+  assert.strictEqual(gs.indiceParteCortada_({ parteIniciadaEn: 1 }, ahora), true);
+  assert.strictEqual(gs.indiceParteCortada_({ parteIniciadaEn: 1, parteTerminadaEn: 300000 }, ahora), false);
+  assert.strictEqual(gs.indiceParteCortada_({ parteIniciadaEn: ahora - 60000 }, ahora), false);
+  assert.strictEqual(gs.indiceParteCortada_(null, ahora), false);
+});
+
+test('fin de una parte: si se pidio detener, para aunque haya avanzado', () => {
+  const d = gs.indiceDecidirSiguiente_({ detenido: true, nota: { partes: 1, progreso: 2 } }, 0, 20);
+  assert.strictEqual(d.accion, 'parar');
+  assert.strictEqual(d.motivo, 'Detenida a pedido.');
+  const d2 = gs.indiceDecidirSiguiente_({ nota: { partes: 1, progreso: 2, detener: true } }, 0, 20);
+  assert.strictEqual(d2.accion, 'parar');
+});
+
+test('fin de una parte: leer mas de la carpeta raiz cuenta como avance', () => {
+  // Una parte que solo leyo el mapa del Drive (sin filas) avanzo: se programa la siguiente.
+  assert.strictEqual(gs.indiceDecidirSiguiente_({ nota: { partes: 1, progreso: 1, filaActual: 0 } }, 0, 20).accion, 'programar');
+  // Sin leer mas ni escribir filas, no avanzo.
+  assert.strictEqual(gs.indiceDecidirSiguiente_({ nota: { partes: 2, progreso: 1, filaActual: 0 } }, 1, 20).accion, 'parar');
 });
