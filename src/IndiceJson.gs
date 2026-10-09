@@ -695,13 +695,17 @@ function indiceTituloSiFalta_(hoja, col, titulo) {
 
 /**
  * Escribe valores enriquecidos en una columna; las filas seguidas van juntas.
+ * Cada celda escrita queda recortada y alineada a la izquierda desde ya,
+ * para que no se desborde sobre las columnas vecinas mientras corre.
  */
 function indiceEscribirTramos_(hoja, col, cambios) {
   var tramo = [];
   function escribir() {
     if (tramo.length === 0) return;
-    hoja.getRange(tramo[0].fila, col, tramo.length, 1)
-      .setRichTextValues(tramo.map(function(c) { return [c.valor]; }));
+    var rango = hoja.getRange(tramo[0].fila, col, tramo.length, 1);
+    rango.setRichTextValues(tramo.map(function(c) { return [c.valor]; }));
+    rango.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    rango.setHorizontalAlignment('left');
     tramo = [];
   }
   cambios.forEach(function(c) {
@@ -717,10 +721,15 @@ function indiceEscribirTramos_(hoja, col, cambios) {
  * la izquierda. Solo formato.
  */
 function indiceFormatoColumnas_(hoja) {
-  var ultima = Math.max(hoja.getLastRow(), 2);
-  hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, ultima - 1, 2)
-    .setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP)
-    .setHorizontalAlignment('left');
+  try {
+    var ultima = Math.max(hoja.getLastRow(), 2);
+    var rango = hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, ultima - 1, 2);
+    rango.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    rango.setHorizontalAlignment('left');
+    console.log('[Indice] Formato aplicado a N y O, filas 2 a ' + ultima);
+  } catch (err) {
+    console.warn('[Indice] No se pudo aplicar el formato a N y O: ' + err.message);
+  }
 }
 
 // ── Pestaña "JSON sin fila" ───────────────────────────────────────────
@@ -891,6 +900,23 @@ function indiceGuardarMapa_(sheetId, arbol, busquedaId) {
   } catch (err) {
     console.warn('[Indice] No se pudo guardar el mapa en la caché: ' + err.message);
     return false;
+  }
+}
+
+/**
+ * Borra el mapa de la caché. Se llama al terminar o detener una búsqueda;
+ * las 6 horas de la caché quedan solo de respaldo si nadie la termina.
+ */
+function indiceBorrarMapa_(sheetId) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var clave = INDICE_MAPA.PREFIJO + sheetId;
+    var n = parseInt(cache.get(clave), 10) || 0;
+    var claves = [clave];
+    for (var i = 0; i < n; i++) claves.push(clave + '_' + i);
+    cache.removeAll(claves);
+  } catch (err) {
+    console.warn('[Indice] No se pudo borrar el mapa de la caché: ' + err.message);
   }
 }
 
@@ -1175,6 +1201,9 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
     var directorio = indiceDirectorioPorCaso_(arbol);
     var filas = indiceLeerFilasCompletas_(hoja);
     nota.ultimaFila = filas.length ? filas[filas.length - 1].fila : 0;
+    // Formato de N y O antes de escribir: también arregla celdas que ya
+    // estaban escritas, aunque la búsqueda no llegue a terminar.
+    indiceFormatoColumnas_(hoja);
     if (avisar('filas', Object.keys(arbol.carpetas).length)) {
       detenido = true;
       throw new Error('Detenida a pedido.');
@@ -1250,6 +1279,7 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
       var sinFila = indiceJsonSinFila_(arbol, directorio, filas);
       indiceEscribirSinFila_(ss, sinFila);
       cuenta.sinFila = sinFila.length;
+      indiceBorrarMapa_(sheetId);
       nota.etapa = 'terminado';
       nota.terminadoEn = Date.now();
       nota.fila = 0;
@@ -1323,6 +1353,11 @@ function indicePrepararBusqueda_(sheetId, modo) {
     }
     nota.activador = null;
     nota.detener = false;
+    // Lo de la parte anterior no aplica a la que se va a programar.
+    nota.parteIniciadaEn = null;
+    nota.parteTerminadaEn = null;
+    nota.avance = null;
+    nota.ocupadoHasta = 0;
     indiceGuardarNota_(sheetId, nota);
     return { nota: nota };
   } finally {
@@ -1358,7 +1393,8 @@ function indiceHayActivadorBusqueda_() {
 }
 
 /**
- * Programa la parte siguiente. desde: 'panel' o 'activador' (se anota para
+ * Programa la parte siguiente. desde: 'panel de Sheets', 'panel de Gmail' o
+ * 'activador' (se anota para
  * saber de qué contexto acepta Google programar). Respeta el cupo de
  * activadores que comparte con reintentos (solo los cuenta).
  * Devuelve el estado anotado en la nota.
@@ -1367,7 +1403,7 @@ function indiceProgramarBusqueda_(sheetId, desde) {
   var activador;
   // Desde el panel (acción del usuario) se reemplaza el que haya, por
   // ejemplo uno programado a la hora; desde un activador no se crea otro.
-  if (desde === 'panel') {
+  if (desde !== 'activador') {
     try {
       ScriptApp.getProjectTriggers().forEach(function(t) {
         if (t.getHandlerFunction() === INDICE_BUSQUEDA.HANDLER) ScriptApp.deleteTrigger(t);
@@ -1468,6 +1504,8 @@ function continuarBusquedaJson(e) {
     return;
   }
 
+  console.log('[Indice] Búsqueda iniciada desde ' + (nota.iniciadoDesde || '(sin dato)') +
+    ', parte ' + ((nota.partes || 0) + 1));
   var progresoAntes = nota.progreso || 0;
   var res;
   try {
@@ -1484,6 +1522,7 @@ function continuarBusquedaJson(e) {
     indiceProgramarBusqueda_(sheetId, 'activador');
   } else if (decision.accion === 'parar') {
     console.warn('[Indice] ' + decision.motivo);
+    if (res.detenido) indiceBorrarMapa_(sheetId);
     indiceActualizarNota_(sheetId, { etapa: 'detenido', ultimoError: decision.motivo, activador: null });
   } else if (res.terminado) {
     indiceActualizarNota_(sheetId, { activador: null });
@@ -1606,6 +1645,7 @@ function buildBusquedaJsonCard_() {
       ' y no terminó</b>: Google la cortó por tiempo antes de guardar.') +
       '<br>Presiona "Continuar" para seguir desde la primera N vacía, o "Detener".<br>' + avance);
     boton('Continuar', 'onContinuarBusquedaJson', true);
+    boton('Ver avance', 'onVerAvanceBusquedaJson', false);
     boton('Detener', 'onDetenerBusquedaJson', false);
   } else if (nota.etapa === 'buscando') {
     var act = nota.activador;
@@ -1635,6 +1675,7 @@ function buildBusquedaJsonCard_() {
     parrafo(rojo('⚠️ <b>La búsqueda se detuvo.</b> ' + escaparHtml(nota.ultimoError || '')) + '<br>' + avance +
       '<br>Lo ya escrito en las columnas N y O se queda. "Continuar" sigue desde la primera N vacía.');
     boton('Continuar', 'onContinuarBusquedaJson', true);
+    boton('Ver avance', 'onVerAvanceBusquedaJson', false);
     boton('Buscar JSON', 'onBuscarJson', false);
     boton('Revisar avisos', 'onRevisarAvisosJson', false);
   } else {
@@ -1650,6 +1691,7 @@ function buildBusquedaJsonCard_() {
   }
 
   var resumen = nota ? indiceTextoCuenta_(nota.cuenta) : '';
+  if (nota && !corriendo) boton('Empezar de cero', 'onEmpezarDeCeroBusquedaJson', false);
   if (resumen) parrafo(resumen);
   if (nota && nota.ultimoError && nota.etapa !== 'detenido') {
     parrafo(rojo('Último error: ' + escaparHtml(nota.ultimoError)));
@@ -1681,7 +1723,8 @@ function buildBusquedaJsonCard_() {
           REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS + ')' +
           (nota && nota.activador
             ? '<br>Última parte siguiente: ' + (INDICE_TEXTO_ESTADO_ACTIVADOR[nota.activador.estado] || nota.activador.estado) +
-              ', pedida desde ' + (nota.activador.desde === 'panel' ? 'el panel' : 'el activador')
+              ', pedida desde ' + (nota.activador.desde === 'activador' ? 'el activador' : 'el ' + nota.activador.desde) +
+              (nota.iniciadoDesde ? '<br>Búsqueda iniciada desde ' + nota.iniciadoDesde : '')
             : '')))
   );
   return card.build();
@@ -1716,7 +1759,7 @@ function indiceTextoActivador_(act) {
  * "Buscar JSON" y "Revisar avisos": preparan la nota y programan la primera
  * parte. No buscan nada aquí (una acción de tarjeta tiene 30 s).
  */
-function indiceIniciarDesdePanel_(modo) {
+function indiceIniciarDesdePanel_(modo, host) {
   var motivo = motivoConfigInvalida();
   if (motivo) return motivo;
   var sheetId = obtenerSheetId();
@@ -1742,7 +1785,129 @@ function indiceIniciarDesdePanel_(modo) {
 
   var prep = indicePrepararBusqueda_(sheetId, modo);
   if (prep.ocupado) return 'Ya hay una búsqueda corriendo.';
-  return INDICE_NOMBRE_MODO[modo] + ': ' + indiceTextoActivador_(indiceProgramarBusqueda_(sheetId, 'panel'));
+  indiceActualizarNota_(sheetId, { iniciadoDesde: host });
+  return INDICE_NOMBRE_MODO[modo] + ': ' + indiceTextoActivador_(indiceProgramarBusqueda_(sheetId, 'panel de ' + host));
+}
+
+/**
+ * Desde qué aplicación se presionó un botón: 'Gmail', 'Sheets' u otra.
+ * Se anota para comparar si el activador se encadena distinto según dónde
+ * arrancó la búsqueda.
+ */
+function indiceHost_(e) {
+  var host = e && e.commonEventObject && e.commonEventObject.hostApp;
+  if (host === 'GMAIL') return 'Gmail';
+  if (host === 'SHEETS') return 'Sheets';
+  return host ? String(host) : 'panel';
+}
+
+/**
+ * ¿Hay una búsqueda esperando que conviene arrancar ya? (solo calcula)
+ * Sí cuando la parte siguiente quedó a la hora, no arrancó a tiempo, no se
+ * pudo programar o Google cortó la última. No cuando hay una corriendo, la
+ * siguiente está por arrancar, terminó o alguien la detuvo.
+ */
+function indiceDebeReanudar_(nota, ahora) {
+  if (!nota || nota.etapa !== 'buscando') return false;
+  if (indiceParteCortada_(nota, ahora)) return true;
+  if (nota.ocupadoHasta > ahora) return false;
+  var act = nota.activador;
+  if (!act) return true;
+  if (act.estado === 'a_la_hora') return true;
+  if (act.estado === 'programado' || act.estado === 'ya_hay_uno') {
+    return ahora - act.en > INDICE_CONFIG.ESPERA_ACTIVADOR_MS;
+  }
+  return true;
+}
+
+/**
+ * Si la búsqueda está esperando, la reanuda programando la parte siguiente
+ * desde esta acción del usuario (abrir el panel o "Ver avance"). Devuelve
+ * el activador programado o null si no hacía falta.
+ */
+function indiceReanudarSiHaceFalta_(host) {
+  try {
+    var sheetId = obtenerSheetId();
+    if (!sheetId) return null;
+    var nota = indiceLeerNota_(sheetId);
+    if (!indiceDebeReanudar_(nota, Date.now())) return null;
+    PropertiesService.getUserProperties().setProperty('INDICE_SHEET_ID', sheetId);
+    var prep = indicePrepararBusqueda_(sheetId, nota.modo);
+    if (prep.ocupado) return null;
+    console.log('[Indice] Búsqueda reanudada desde el panel de ' + host);
+    return indiceProgramarBusqueda_(sheetId, 'panel de ' + host);
+  } catch (err) {
+    console.warn('[Indice] No se pudo reanudar la búsqueda: ' + err.message);
+    return null;
+  }
+}
+
+/**
+ * Filas (índices dentro de los valores dados) cuya celda N tiene solo un
+ * motivo, sin links. Son las que escribió la búsqueda; las que tienen
+ * links pueden venir de los envíos y no se tocan.
+ */
+function indiceFilasConSoloMotivo_(valoresN) {
+  var res = [];
+  valoresN.forEach(function(v, i) {
+    var celda = indiceAnalizarCeldaN_(v[0]);
+    if (celda.links.length === 0 && celda.motivos.length > 0) res.push(i);
+  });
+  return res;
+}
+
+/**
+ * "Empezar de cero": deja todo como antes de la primera búsqueda para
+ * probar de nuevo. Borra la nota, la caché, los activadores de la búsqueda,
+ * la pestaña "JSON sin fila", la columna O y los motivos de la columna N.
+ * Los links de la columna N se quedan: pueden venir de los envíos y no hay
+ * forma de distinguirlos de los que puso la búsqueda.
+ */
+function onEmpezarDeCeroBusquedaJson(e) {
+  var aviso;
+  var lock = LockService.getScriptLock();
+  var conLock = false;
+  try {
+    var sheetId = obtenerSheetId();
+    var nota = indiceLeerNota_(sheetId);
+    if (nota && nota.ocupadoHasta > Date.now() && !indiceParteCortada_(nota, Date.now())) {
+      return indiceRespuestaBusqueda_('Hay una parte corriendo. Presiona "Detener", espera unos segundos y vuelve a intentar.');
+    }
+    conLock = lock.tryLock(10000);
+    if (!conLock) throw new Error('el Sheet está ocupado, intenta en unos segundos.');
+
+    ScriptApp.getProjectTriggers().forEach(function(t) {
+      if (t.getHandlerFunction() === INDICE_BUSQUEDA.HANDLER) ScriptApp.deleteTrigger(t);
+    });
+    indiceBorrarMapa_(sheetId);
+    PropertiesService.getScriptProperties().deleteProperty(INDICE_BUSQUEDA.PREFIJO_NOTA + sheetId);
+
+    var ss = SpreadsheetApp.openById(sheetId);
+    var sinFila = ss.getSheetByName(INDICE_PESTANA_SIN_FILA);
+    if (sinFila) ss.deleteSheet(sinFila);
+
+    var hoja = ss.getSheetByName(obtenerSheetTab());
+    var motivosBorrados = 0;
+    if (hoja && hoja.getLastRow() >= 2) {
+      var n = hoja.getLastRow() - 1;
+      hoja.getRange(2, INDICE_COL_CARPETA, n, 1).clearContent();
+      var valoresN = hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, n, 1).getValues();
+      var letraN = columnALetra(SHEET_COLS.ARCHIVOS_JSON);
+      var celdas = indiceFilasConSoloMotivo_(valoresN).map(function(i) { return letraN + (i + 2); });
+      if (celdas.length > 0) hoja.getRangeList(celdas).clearContent();
+      motivosBorrados = celdas.length;
+      SpreadsheetApp.flush();
+    }
+    console.log('[Indice] Empezar de cero: ' + motivosBorrados + ' motivos borrados de la columna N');
+    aviso = 'Listo: se borraron la columna O, ' + motivosBorrados + ' motivo(s) de la columna N, ' +
+      'la pestaña "' + INDICE_PESTANA_SIN_FILA + '" y el avance. Los links de la N se dejaron.';
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo empezar de cero: ' + err.message;
+  } finally {
+    if (conLock) lock.releaseLock();
+  }
+  return indiceRespuestaBusqueda_(aviso);
 }
 
 /**
@@ -1774,6 +1939,7 @@ function onDetenerBusquedaJson(e) {
     } catch (errAct) {
       console.log('[Indice] No se pudo borrar un activador: ' + errAct.message);
     }
+    indiceBorrarMapa_(sheetId);
     var nota = indiceLeerNota_(sheetId);
     var ahora = Date.now();
     if (!nota || nota.etapa === 'terminado' || nota.etapa === 'detenido') {
@@ -1804,14 +1970,19 @@ function onAbrirBusquedaJson(e) {
     .build();
 }
 
+/**
+ * "Ver avance": refresca la tarjeta y, si la búsqueda estaba esperando (a
+ * la hora, sin arrancar o cortada), la reanuda desde esta acción.
+ */
 function onVerAvanceBusquedaJson(e) {
-  return indiceRespuestaBusqueda_(null);
+  var act = indiceReanudarSiHaceFalta_(indiceHost_(e));
+  return indiceRespuestaBusqueda_(act ? 'Se reanudó la búsqueda. ' + indiceTextoActivador_(act) : null);
 }
 
 function onBuscarJson(e) {
   var aviso;
   try {
-    aviso = indiceIniciarDesdePanel_('normal');
+    aviso = indiceIniciarDesdePanel_('normal', indiceHost_(e));
   } catch (err) {
     console.error('[Indice] ' + err.message);
     aviso = 'No se pudo iniciar la búsqueda: ' + err.message;
@@ -1822,7 +1993,7 @@ function onBuscarJson(e) {
 function onRevisarAvisosJson(e) {
   var aviso;
   try {
-    aviso = indiceIniciarDesdePanel_('revisar');
+    aviso = indiceIniciarDesdePanel_('revisar', indiceHost_(e));
   } catch (err) {
     console.error('[Indice] ' + err.message);
     aviso = 'No se pudo iniciar la revisión: ' + err.message;
@@ -1848,7 +2019,7 @@ function onContinuarBusquedaJson(e) {
       var prep = indicePrepararBusqueda_(sheetId, nota.modo);
       aviso = prep.ocupado
         ? 'Ya hay una parte corriendo.'
-        : 'Parte siguiente: ' + indiceTextoActivador_(indiceProgramarBusqueda_(sheetId, 'panel'));
+        : 'Parte siguiente: ' + indiceTextoActivador_(indiceProgramarBusqueda_(sheetId, 'panel de ' + indiceHost_(e)));
     }
   } catch (err) {
     console.error('[Indice] ' + err.message);
@@ -1915,7 +2086,7 @@ function onAvanzarAquiIndiceJson(e) {
 }
 
 function onEmpezarDeCeroIndiceJson(e) {
-  return indiceRespuestaBusqueda_('Esa opción ya no existe en esta versión.');
+  return onEmpezarDeCeroBusquedaJson(e);
 }
 
 function onReiniciarIndiceJson(e) {

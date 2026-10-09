@@ -185,8 +185,10 @@ test('celda N: vacia se escribe, links no se tocan, mixta se limpia, motivo solo
 // Sheet en memoria con columnas hasta la O.
 function hojaConO(filas) {
   const escritas = {};
+  const recortadas = [];
   return {
     escritas,
+    recortadas,
     hoja: {
       getLastRow: () => filas.length,
       getRange(fila, col, nFilas = 1, nCols = 1) {
@@ -196,6 +198,8 @@ function hojaConO(filas) {
           getValue: () => filas[fila - 1][col - 1] ?? '',
           setValue(v) { filas[fila - 1][col - 1] = v; return this; },
           setFontWeight() { return this; },
+          setWrapStrategy(w) { recortadas.push([fila, col, nFilas, w]); return this; },
+          setHorizontalAlignment() { return this; },
           setRichTextValues(valores) {
             valores.forEach((v, i) => {
               escritas[(fila + i) + ',' + col] = v[0].getText();
@@ -224,7 +228,8 @@ test('bloque de filas: escribe N y O con las reglas y respeta lo que ya hay', ()
     fila(7000, 'Otro', 'El original no tiene JSON'),        // 5: solo motivo
     fila(9999, 'Pagos')                                     // 6: cambio de caso
   ];
-  const { hoja, escritas } = hojaConO(datos);
+  const { hoja, escritas, recortadas } = hojaConO(datos);
+  gs.SpreadsheetApp.WrapStrategy = { CLIP: 'CLIP' };
   gs.obtenerSheetTab = () => 'Solicitudes';
   gs.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
   gs.SpreadsheetApp.flush = () => {};
@@ -251,6 +256,9 @@ test('bloque de filas: escribe N y O con las reglas y respeta lo que ya hay', ()
   assert.strictEqual(escritas['5,' + N], undefined);
   assert.strictEqual(escritas['6,' + N], undefined);
   assert.strictEqual(datos[0][O - 1], 'Carpeta copiada');
+  // Lo escrito queda recortado desde ya (no se desborda mientras corre).
+  assert.ok(recortadas.some((r) => r[0] === 2 && r[1] === N && r[3] === 'CLIP'));
+  assert.ok(recortadas.some((r) => r[0] === 4 && r[1] === O && r[3] === 'CLIP'));
   assert.deepStrictEqual(plano(cuenta), { cambiaron: 1, links: 1, yaTenia: 1, limpiada: 1, conMotivo: 1, carpetas: 2 });
 
   // Al revisar avisos, la fila 5 (solo motivo) si se actualiza.
@@ -349,4 +357,46 @@ test('fin de una parte: leer mas de la carpeta raiz cuenta como avance', () => {
   assert.strictEqual(gs.indiceDecidirSiguiente_({ nota: { partes: 1, progreso: 1, filaActual: 0 } }, 0, 20).accion, 'programar');
   // Sin leer mas ni escribir filas, no avanzo.
   assert.strictEqual(gs.indiceDecidirSiguiente_({ nota: { partes: 2, progreso: 1, filaActual: 0 } }, 1, 20).accion, 'parar');
+});
+
+test('preparar una busqueda olvida la parte anterior (no se ve como cortada)', () => {
+  const props = {};
+  gs.PropertiesService = { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; } }) };
+  gs.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
+  // Nota vieja: busqueda detenida cuya ultima parte fue cortada por Google.
+  props.INDICE_NOTA_X = JSON.stringify({ modo: 'normal', etapa: 'detenido', partes: 1, parteIniciadaEn: 1000, ocupadoHasta: 0 });
+  const prep = plano(gs.indicePrepararBusqueda_('X', 'normal'));
+  assert.strictEqual(prep.nota.etapa, 'buscando');
+  assert.strictEqual(prep.nota.parteIniciadaEn, null);
+  assert.strictEqual(gs.indiceParteCortada_(prep.nota, 60 * 60 * 1000), false);
+});
+
+test('reanudar: solo si la parte siguiente esta esperando y nadie la detuvo', () => {
+  const ahora = 100 * 60 * 1000;
+  const r = (nota) => gs.indiceDebeReanudar_(nota, ahora);
+  assert.strictEqual(r(null), false);
+  assert.strictEqual(r({ etapa: 'terminado' }), false);
+  assert.strictEqual(r({ etapa: 'detenido' }), false);
+  // Corriendo: no.
+  assert.strictEqual(r({ etapa: 'buscando', ocupadoHasta: ahora + 60000, parteIniciadaEn: ahora - 60000 }), false);
+  // Programada hace poco: esta por arrancar, no.
+  assert.strictEqual(r({ etapa: 'buscando', activador: { estado: 'programado', en: ahora - 30000 } }), false);
+  // A la hora, sin arrancar a tiempo, sin activador o con error: si.
+  assert.strictEqual(r({ etapa: 'buscando', activador: { estado: 'a_la_hora', en: ahora + 3600000 } }), true);
+  assert.strictEqual(r({ etapa: 'buscando', activador: { estado: 'programado', en: ahora - 120000 } }), true);
+  assert.strictEqual(r({ etapa: 'buscando', activador: null }), true);
+  assert.strictEqual(r({ etapa: 'buscando', activador: { estado: 'error', en: ahora } }), true);
+  // Parte cortada por Google: si.
+  assert.strictEqual(r({ etapa: 'buscando', parteIniciadaEn: ahora - 10 * 60000, ocupadoHasta: ahora + 1 }), true);
+});
+
+test('empezar de cero: en la N solo se borran las celdas con motivo, nunca las que tienen links', () => {
+  const valores = [[''], ['https://a'], ['El original no tiene JSON'], ['Sin acceso al original o fue borrado; pedir permiso\nhttps://b'], ['No hay carpeta del caso en el Drive ni link en la fila']];
+  assert.deepStrictEqual(plano(gs.indiceFilasConSoloMotivo_(valores)), [2, 4]);
+});
+
+test('desde donde se presiono un boton: Gmail o Sheets', () => {
+  assert.strictEqual(gs.indiceHost_({ commonEventObject: { hostApp: 'GMAIL' } }), 'Gmail');
+  assert.strictEqual(gs.indiceHost_({ commonEventObject: { hostApp: 'SHEETS' } }), 'Sheets');
+  assert.strictEqual(gs.indiceHost_({}), 'panel');
 });
