@@ -1,71 +1,35 @@
 /**
- * IndiceJson.gs: índice de los .json guardados bajo la carpeta raíz.
+ * IndiceJson.gs: JSON de las solicitudes.
  *
- * Recorre la carpeta raíz configurada, una carpeta por consulta (la consulta
- * agrupada por padres pierde archivos sin avisar en carpetas de otros), y
- * escribe en la pestaña "Índice JSON" una fila por cada .json con su
- * servicio, caso, ambiente, componente, estado y link.
+ * Para cada fila del Sheet busca sus .json y los escribe en la columna N
+ * (links o, si no hay, el motivo). En la columna O pone el link a nuestra
+ * carpeta copiada cuando la columna C no lo tiene. Los .json de la raíz que
+ * ninguna fila usa quedan en la pestaña "JSON sin fila".
  *
- * El trabajo se hace por partes que guardan su avance en una pestaña oculta
- * del mismo Sheet. El botón del panel solo prepara y programa un activador
- * .after(), como los reintentos de copia; cada parte corre hasta 5 min y
- * programa la siguiente. Mientras corre, la pestaña "Índice JSON" muestra
- * el avance. Si el activador no corre, el panel ofrece avanzar desde ahí.
+ * La clave es el número de caso: se juntan los .json de todas las carpetas
+ * del caso dentro de la raíz configurada (tomada por su ID). Si el caso no
+ * tiene carpeta, se usan los links de las columnas C y D, incluidos los
+ * originales de otras personas (una carpeta por consulta: la consulta
+ * agrupada por padres pierde archivos sin avisar en carpetas de otros).
  *
- * Para las filas sin copia en nuestra raíz, abre los originales de sus
- * columnas C y D (una carpeta por consulta) y registra sus .json con origen
- * "Original"; los links sin acceso van a la pestaña "Índice JSON (sin
- * acceso)". Se enlaza, nunca se copia.
- *
- * Al final llena la columna N (Archivos JSON) de la pestaña de solicitudes,
- * solo en filas con la N vacía y con un cruce seguro (por carpeta, por ruta
- * o por link original), revisando cada fila justo antes de escribir.
+ * Trabaja por partes con un activador .after(), como los reintentos. El
+ * avance es la propia columna N: cada parte sigue en la primera N vacía.
+ * Solo se guarda una nota corta por Sheet en las propiedades del proyecto.
+ * La columna C, el envío y los reintentos no se tocan.
  */
 
 var INDICE_CONFIG = {
-  PESTANA: 'Índice JSON',
-  PESTANA_AVANCE: 'Índice JSON (avance)',
-  PESTANA_SIN_ACCESO: 'Índice JSON (sin acceso)',
-  // Una parte del activador: 5 min, igual que los reintentos de copia (la
-  // ejecución tiene 6). Y una parte de respaldo desde el panel, que solo
-  // se usa si el activador no corre (una acción de tarjeta tiene 30 s).
-  PRESUPUESTO_ACTIVADOR_MS: 5 * 60 * 1000,
-  PRESUPUESTO_BOTON_MS: 15000,
-  // Tiempo mínimo que debe quedar para empezar a escribir la pestaña.
-  MARGEN_ESCRITURA_MS: 60000,
-  MARGEN_ESCRITURA_BOTON_MS: 8000,
-  // Tiempo que se reserva para no empezar otra consulta al final de la parte.
-  MARGEN_CONSULTA_MS: 3000,
-  MAX_PARTES: 60,
-  MAX_HISTORIAL: 8,
-  MAX_LINEAS_N: 6,
-  // Filas de la columna N que se escriben con el lock tomado; entre un
-  // bloque y otro se suelta para no frenar los envíos de los demás.
-  BLOQUE_N: 40,
-  // Cada cuánto se guardan los contadores durante una parte larga, para
-  // que "Ver avance" muestre números que se mueven.
-  GUARDAR_CONTADORES_MS: 20000,
-  // Si la parte programada no arrancó en este tiempo, el panel lo avisa.
-  ESPERA_ACTIVADOR_MS: 90000,
-  TAMANO_TROZO: 45000,
-  HANDLER_ACTIVADOR: 'continuarIndiceJson',
   CARPETA_MIME: 'application/vnd.google-apps.folder',
-  CARPETA_CAPA: 'SERVICIOS CAPA'
+  // Filas que se escriben con el lock tomado; entre un bloque y otro se
+  // suelta para no frenar los envíos de los demás.
+  BLOQUE_N: 40,
+  // Si la parte programada no arrancó en este tiempo, la tarjeta lo avisa.
+  ESPERA_ACTIVADOR_MS: 90000
 };
 
-var INDICE_ENCABEZADOS = [
-  'Servicio', 'Caso', 'Origen', 'Carpeta del envío', 'Rama', 'Ruta dentro del caso',
-  'Archivo', 'Modificado', 'Ambiente', 'Componente', 'Estado', 'Fila(s)',
-  'Cruce', 'URL'
-];
-
-var INDICE_ENCABEZADOS_SIN_ACCESO = [
-  'Fila', 'Caso', 'Servicio', 'Componente', 'Estado', 'Link sin acceso'
-];
+// ── Utilidades ────────────────────────────────────────────────────────
 
 var INDICE_REGEX_URL_DRIVE = /https?:\/\/(?:drive|docs)\.google\.com\/[^\s<>"]+/gi;
-
-// ── Funciones puras (sin servicios de Google) ─────────────────────────
 
 /**
  * Misma limpieza que se aplica al nombre del servicio al crear su carpeta.
@@ -74,30 +38,6 @@ function indiceLimpiarServicio_(servicio) {
   return (String(servicio || '(sin servicio)')
     .replace(/[\\/:*?"<>|]/g, '_')
     .trim()) || '(sin servicio)';
-}
-
-/**
- * Interpreta los nombres de carpeta desde la raíz con las tres estructuras
- * que conviven: Servicio/Caso, SERVICIOS CAPA/[APIM/]Servicio/Caso y
- * [APIM/]Servicio/Caso. Devuelve null si la ruta no llega al nivel del caso.
- */
-function indiceClasificarRuta_(segmentos) {
-  var i = 0;
-  if (segmentos[i] === INDICE_CONFIG.CARPETA_CAPA) i++;
-  var rama = 'General';
-  if (segmentos[i] === CONFIG.CARPETA_APIM) {
-    rama = 'APIM';
-    i++;
-  }
-  if (segmentos.length - i < 2) return null;
-  var carpetaEnvio = segmentos[i + 1];
-  return {
-    rama: rama,
-    servicio: segmentos[i],
-    carpetaEnvio: carpetaEnvio,
-    caso: carpetaEnvio.replace(/_\d+$/, ''),
-    resto: segmentos.slice(i + 2).join('/')
-  };
 }
 
 /**
@@ -120,76 +60,25 @@ function indiceCadena_(carpetaId, raizId, carpetas) {
   return null;
 }
 
-function indiceUnicos_(lista) {
+/**
+ * IDs de Drive de una celda: textos con hipervínculo y URLs pegadas como
+ * texto plano, sin repetir.
+ */
+function indiceIdsDeCelda_(rich) {
   var vistos = {};
-  var res = [];
-  lista.forEach(function(v) {
-    var s = String(v == null ? '' : v).trim();
-    if (!s || vistos[s]) return;
-    vistos[s] = true;
-    res.push(s);
-  });
-  return res;
-}
-
-/**
- * Clave de cruce por ruta de una fila: rama (por su componente), servicio
- * limpio y caso. Es la misma forma en que el envío arma sus carpetas.
- */
-function indiceClaveFila_(f) {
-  var rama = esComponenteAPIM(String(f.componente || '').trim()) ? 'APIM' : 'General';
-  return rama + '|' + indiceLimpiarServicio_(f.servicio) + '|' + String(f.caso).trim();
-}
-
-/**
- * Carpetas de envío de nuestra raíz por clave de ruta, tengan o no .json.
- * Sirve para saber si una fila tiene copia y para detectar Caso_N.
- */
-function indiceEnviosPorClave_(datos) {
-  var envios = {};
-  Object.keys(datos.carpetas).forEach(function(id) {
-    var cadena = indiceCadena_(id, datos.raizId, datos.carpetas);
-    if (!cadena) return;
-    var ruta = indiceClasificarRuta_(cadena.map(function(c) { return c.nombre; }));
-    if (!ruta || ruta.resto !== '') return;
-    var clave = ruta.rama + '|' + ruta.servicio + '|' + ruta.caso;
-    if (!envios[clave]) envios[clave] = {};
-    envios[clave][ruta.carpetaEnvio] = true;
-  });
-  return envios;
-}
-
-/**
- * Links a originales que hay que revisar: los de las columnas C y D de las
- * filas que NO tienen copia en nuestra raíz (ni por su link ni por ruta).
- * Una fila con copia nunca va a sus originales.
- *
- * Devuelve { ids: [id], porId: { id: [filas] } }. El mismo link en varias
- * filas se revisa una sola vez y el resultado va a todas.
- */
-function indiceOriginalesPorRevisar_(datos, filasSheet) {
-  var envios = indiceEnviosPorClave_(datos);
-  var propios = {};
-  propios[datos.raizId] = true;
-  (datos.jsons || []).forEach(function(j) { propios[j[0]] = true; });
-
   var ids = [];
-  var porId = {};
-  filasSheet.forEach(function(f) {
-    var links = f.ids || [];
-    var conCopia = links.some(function(id) { return datos.carpetas[id] || id === datos.raizId; }) ||
-      !!envios[indiceClaveFila_(f)];
-    if (conCopia) return;
-    links.forEach(function(id) {
-      if (propios[id] || datos.carpetas[id]) return;
-      if (!porId[id]) {
-        porId[id] = [];
-        ids.push(id);
-      }
-      porId[id].push(f);
-    });
+  function agregar(url) {
+    var parsed = parsearIdDrive(url);
+    if (!parsed || vistos[parsed.id]) return;
+    vistos[parsed.id] = true;
+    ids.push(parsed.id);
+  }
+  rich.getRuns().forEach(function(run) {
+    var url = run.getLinkUrl();
+    if (url) agregar(url);
   });
-  return { ids: ids, porId: porId };
+  (rich.getText().match(INDICE_REGEX_URL_DRIVE) || []).forEach(agregar);
+  return ids;
 }
 
 /**
@@ -219,340 +108,320 @@ function indiceOrigenDeJson_(j, O) {
   return { origenes: origenes, cercano: cercano, ruta: ruta };
 }
 
-/**
- * Filas del índice para los .json encontrados en originales. Servicio,
- * caso, ambiente, componente y estado salen de las filas que los enlazan.
- */
-function indiceArmarFilasOriginales_(datos, filasSheet) {
-  var O = datos.originales;
-  var rev = indiceOriginalesPorRevisar_(datos, filasSheet);
-  var salida = [];
-  (O.jsons || []).forEach(function(j) {
-    var info = indiceOrigenDeJson_(j, O);
-    var vistas = {};
-    var filas = [];
-    info.origenes.forEach(function(o) {
-      (rev.porId[o] || []).forEach(function(f) {
-        if (vistas[f.fila]) return;
-        vistas[f.fila] = true;
-        filas.push(f);
-      });
-    });
-    if (filas.length === 0) return;
-    filas.sort(function(a, b) { return a.fila - b.fila; });
-
-    salida.push({
-      servicio: indiceUnicos_(filas.map(function(f) { return f.servicio; })).join(' / ') || '(sin servicio)',
-      caso: indiceUnicos_(filas.map(function(f) { return f.caso; })).join(' / '),
-      carpetaEnvio: info.cercano ? O.carpetas[info.cercano][0] : '',
-      rama: '',
-      resto: info.ruta.join('/'),
-      archivo: j[1],
-      id: j[0],
-      url: 'https://drive.google.com/file/d/' + j[0] + '/view',
-      modificado: j[3] || '',
-      ambiente: indiceUnicos_(filas.map(function(f) { return f.ambiente; })).join(' / '),
-      componente: indiceUnicos_(filas.map(function(f) { return f.componente; })).join(' / '),
-      estado: indiceUnicos_(filas.map(function(f) { return f.estado; })).join(' / '),
-      filas: filas.map(function(f) { return f.fila; }).join(', '),
-      numerosFila: filas.map(function(f) { return f.fila; }),
-      cruce: 'por link original',
-      origen: 'Original'
-    });
-  });
-  return salida;
-}
-
-/**
- * Filas sin copia con algún link original al que no hay acceso (o que fue
- * borrado), una entrada por fila y link, ordenadas por fila.
- */
-function indiceFilasSinAcceso_(datos, filasSheet) {
-  var O = datos.originales;
-  if (!O) return [];
-  var rev = indiceOriginalesPorRevisar_(datos, filasSheet);
-  var lista = [];
-  rev.ids.forEach(function(id) {
-    if (O.estados[id] !== 'sin_acceso') return;
-    rev.porId[id].forEach(function(f) {
-      lista.push({
-        fila: f.fila,
-        caso: f.caso,
-        servicio: f.servicio,
-        componente: f.componente,
-        estado: f.estado,
-        id: id,
-        url: 'https://drive.google.com/open?id=' + id
-      });
-    });
-  });
-  lista.sort(function(a, b) { return a.fila - b.fila; });
-  return lista;
-}
-
-/**
- * Cruza los .json encontrados con las filas del Sheet y devuelve las filas
- * del índice, ordenadas por servicio y, dentro del servicio, del caso más
- * reciente al más viejo.
- *
- * datos: { raizId, carpetas: { id: [nombre, padre] },
- *          jsons: [[id, nombre, padre, modificadoIso]],
- *          originales (opcional): { estados, carpetas, jsons } }
- * filasSheet: [{ fila, caso, servicio, componente, ambiente, estado, ids }]
- *
- * Reglas de cruce:
- *   por carpeta: un link de la fila (columna C o D) apunta a una carpeta
- *                que contiene al .json.
- *   por ruta:    misma rama, servicio y caso que la ruta del .json.
- *   ambiguo:     por ruta, pero el caso tiene varias carpetas de envío
- *                (Caso, Caso_2...).
- *   sin fila:    ninguna fila coincide; el .json queda en el índice igual.
- *   por link original: el .json está en un original enlazado por una fila
- *                que no tiene copia en nuestra raíz.
- * Cada fila del Sheet se cruza por su cuenta: un mismo .json puede quedar
- * asociado a varias filas.
- */
-function indiceArmarFilas_(datos, filasSheet) {
-  var carpetas = datos.carpetas;
-
-  var filasPorCarpeta = {};
-  var filasPorRuta = {};
-  filasSheet.forEach(function(f) {
-    (f.ids || []).forEach(function(id) {
-      if (!carpetas[id]) return;
-      if (!filasPorCarpeta[id]) filasPorCarpeta[id] = [];
-      filasPorCarpeta[id].push(f);
-    });
-    var clave = indiceClaveFila_(f);
-    if (!filasPorRuta[clave]) filasPorRuta[clave] = [];
-    filasPorRuta[clave].push(f);
-  });
-
-  var enviosPorClave = indiceEnviosPorClave_(datos);
-
-  var salida = [];
-  datos.jsons.forEach(function(j) {
-    var cadena = indiceCadena_(j[2], datos.raizId, carpetas);
-    if (!cadena) return;
-    var nombres = cadena.map(function(c) { return c.nombre; });
-    var ruta = indiceClasificarRuta_(nombres);
-
-    var filas = null;
-    var cruce = 'sin fila';
-    for (var k = cadena.length - 1; k >= 0; k--) {
-      if (filasPorCarpeta[cadena[k].id]) {
-        filas = filasPorCarpeta[cadena[k].id];
-        cruce = 'por carpeta';
-        break;
-      }
-    }
-    if (!filas && ruta) {
-      var clave = ruta.rama + '|' + ruta.servicio + '|' + ruta.caso;
-      if (filasPorRuta[clave]) {
-        filas = filasPorRuta[clave];
-        var envios = enviosPorClave[clave] ? Object.keys(enviosPorClave[clave]).length : 1;
-        cruce = envios > 1 ? 'ambiguo' : 'por ruta';
-      }
-    }
-    filas = filas || [];
-
-    salida.push({
-      servicio: ruta ? ruta.servicio : '(otra ubicación)',
-      caso: ruta ? ruta.caso : '',
-      carpetaEnvio: ruta ? ruta.carpetaEnvio : '',
-      rama: ruta ? ruta.rama : '',
-      resto: ruta ? ruta.resto : nombres.join('/'),
-      archivo: j[1],
-      id: j[0],
-      url: 'https://drive.google.com/file/d/' + j[0] + '/view',
-      modificado: j[3] || '',
-      ambiente: indiceUnicos_(filas.map(function(f) { return f.ambiente; })).join(' / '),
-      componente: indiceUnicos_(filas.map(function(f) { return f.componente; })).join(' / '),
-      estado: indiceUnicos_(filas.map(function(f) { return f.estado; })).join(' / '),
-      filas: filas.map(function(f) { return f.fila; }).join(', '),
-      numerosFila: filas.map(function(f) { return f.fila; }),
-      cruce: cruce,
-      origen: 'Copia'
-    });
-  });
-
-  if (datos.originales) {
-    indiceArmarFilasOriginales_(datos, filasSheet).forEach(function(f) { salida.push(f); });
-  }
-
-  salida.sort(function(a, b) {
-    var s = a.servicio.toLowerCase().localeCompare(b.servicio.toLowerCase());
-    if (s !== 0) return s;
-    var ca = parseInt(a.caso, 10);
-    var cb = parseInt(b.caso, 10);
-    var na = isNaN(ca);
-    var nb = isNaN(cb);
-    if (na !== nb) return na ? 1 : -1;
-    if (!na && ca !== cb) return cb - ca;
-    var e = a.carpetaEnvio.localeCompare(b.carpetaEnvio);
-    if (e !== 0) return e;
-    var r = a.resto.localeCompare(b.resto);
-    if (r !== 0) return r;
-    return a.archivo.localeCompare(b.archivo);
-  });
-  return salida;
-}
-
-/**
- * IDs de Drive de una celda: textos con hipervínculo y URLs pegadas como
- * texto plano, sin repetir.
- */
-function indiceIdsDeCelda_(rich) {
-  var vistos = {};
-  var ids = [];
-  function agregar(url) {
-    var parsed = parsearIdDrive(url);
-    if (!parsed || vistos[parsed.id]) return;
-    vistos[parsed.id] = true;
-    ids.push(parsed.id);
-  }
-  rich.getRuns().forEach(function(run) {
-    var url = run.getLinkUrl();
-    if (url) agregar(url);
-  });
-  (rich.getText().match(INDICE_REGEX_URL_DRIVE) || []).forEach(agregar);
-  return ids;
-}
-
-var INDICE_CRUCES_SEGUROS = ['por carpeta', 'por ruta', 'por link original'];
-
-/**
- * Decide qué filas reciben JSON en la columna N. Solo cuentan los cruces
- * seguros (por carpeta, por ruta o por link original); las filas que solo
- * tienen cruces ambiguos se dejan sin tocar. Si la N ya tiene algo se
- * decide al escribir, no acá.
- *
- * filasSinAcceso: { fila: true } de las filas con algún original sin acceso.
- *
- * Devuelve { objetivos: [{ fila, caso, servicio, urls }], ambiguas,
- * sinAcceso, sinJson }, con los objetivos ordenados por número de fila.
- */
-function indicePlanColumnaN_(filasIndice, filasSheet, filasSinAcceso) {
-  filasSinAcceso = filasSinAcceso || {};
-  var porFila = {};
-  var ambiguas = {};
-  filasIndice.forEach(function(f) {
-    (f.numerosFila || []).forEach(function(n) {
-      if (f.cruce === 'ambiguo') {
-        ambiguas[n] = true;
-        return;
-      }
-      if (INDICE_CRUCES_SEGUROS.indexOf(f.cruce) === -1) return;
-      if (!porFila[n]) porFila[n] = [];
-      if (porFila[n].indexOf(f.url) === -1) porFila[n].push(f.url);
-    });
-  });
-
-  var plan = { objetivos: [], ambiguas: 0, sinAcceso: 0, sinJson: 0 };
-  filasSheet.forEach(function(f) {
-    if (porFila[f.fila]) {
-      plan.objetivos.push({ fila: f.fila, caso: f.caso, servicio: f.servicio, urls: porFila[f.fila] });
-    } else if (ambiguas[f.fila]) {
-      plan.ambiguas++;
-    } else if (filasSinAcceso[f.fila]) {
-      plan.sinAcceso++;
-    } else {
-      plan.sinJson++;
-    }
-  });
-  plan.objetivos.sort(function(a, b) { return a.fila - b.fila; });
-  return plan;
-}
-
-/**
- * Texto de la columna N con el mismo formato que deja el envío (una URL
- * por línea), con un tope de líneas.
- */
-function indiceTextoColumnaN_(urls) {
-  var max = INDICE_CONFIG.MAX_LINEAS_N;
-  if (urls.length <= max) return urls.join('\n');
-  return urls.slice(0, max).join('\n') + '\ny ' + (urls.length - max) +
-    ' más en la pestaña ' + INDICE_CONFIG.PESTANA;
-}
-
-function indiceTrocear_(texto, tamano) {
-  var trozos = [];
-  for (var i = 0; i < texto.length; i += tamano) {
-    trozos.push(texto.substring(i, i + tamano));
-  }
-  return trozos;
-}
-
-// ── Avance guardado en la pestaña oculta ──────────────────────────────
+// ── Búsqueda por número de caso (funciones puras) ─────────────────────
 //
-// A1 guarda el resumen (etapa, parte, contadores) y de A2 en adelante va,
-// en trozos, el trabajo pendiente: cola de carpetas, carpetas vistas y
-// .json encontrados. Una propiedad no alcanza: tiene tope de 9 KB.
+// El número de caso es la clave: el nombre del servicio puede tener
+// errores de escritura y un caso tiene filas de varios ambientes y
+// componentes. Trabajan sobre el árbol de la raíz ya recorrido:
+//   arbol: { raizId, carpetas: { id: [nombre, padre] },
+//            jsons: [[id, nombre, padre, modificadoIso, md5]] }
 
-function indicePestanaAvance_(ss) {
-  var hoja = ss.getSheetByName(INDICE_CONFIG.PESTANA_AVANCE);
-  if (!hoja) {
-    hoja = ss.insertSheet(INDICE_CONFIG.PESTANA_AVANCE);
-    hoja.getRange('A:A').setNumberFormat('@');
-    hoja.hideSheet();
-  }
-  return hoja;
+var INDICE_MOTIVOS = {
+  carpeta_sin_json: 'Hay carpeta del caso en el Drive, pero no tiene JSON',
+  original_sin_acceso: 'Sin acceso al original o fue borrado; pedir permiso',
+  original_sin_json: 'El original no tiene JSON',
+  sin_carpeta_ni_link: 'No hay carpeta del caso en el Drive ni link en la fila'
+};
+
+function indiceUrlArchivo_(id) {
+  return 'https://drive.google.com/file/d/' + id + '/view';
 }
 
-function indiceLeerResumen_(hoja) {
-  var texto = String(hoja.getRange(1, 1).getValue() || '');
-  if (!texto) return null;
-  try {
-    return JSON.parse(texto);
-  } catch (err) {
-    console.warn('[Indice] Resumen ilegible, se empieza de cero');
-    return null;
-  }
-}
-
-function indiceGuardarResumen_(hoja, resumen) {
-  hoja.getRange(1, 1).setValue(JSON.stringify(resumen));
-}
-
-function indiceLeerTrabajo_(hoja) {
-  var ultima = hoja.getLastRow();
-  if (ultima < 2) return null;
-  var valores = hoja.getRange(2, 1, ultima - 1, 1).getValues();
-  var texto = valores.map(function(v) { return String(v[0] || ''); }).join('');
-  if (!texto) return null;
-  return JSON.parse(texto);
-}
-
-function indiceGuardarTodo_(hoja, resumen, trabajo) {
-  var filas = [[JSON.stringify(resumen)]];
-  if (trabajo) {
-    indiceTrocear_(JSON.stringify(trabajo), INDICE_CONFIG.TAMANO_TROZO).forEach(function(t) {
-      filas.push([t]);
-    });
-  }
-  hoja.clearContents();
-  hoja.getRange(1, 1, filas.length, 1).setValues(filas);
+function indiceUrlCarpeta_(id) {
+  return 'https://drive.google.com/drive/folders/' + id;
 }
 
 /**
- * Estado del índice para mostrar en el panel. Null si nunca se creó o no
- * se puede leer.
+ * Número de caso normalizado (solo dígitos, sin ceros a la izquierda), o ''
+ * si el valor no es un número. En el Sheet un caso puede venir como número
+ * o como texto.
  */
-function leerEstadoIndiceJson_() {
-  var sheetId = obtenerSheetId();
-  if (!sheetId) return null;
-  try {
-    var ss = SpreadsheetApp.openById(sheetId);
-    var hoja = ss.getSheetByName(INDICE_CONFIG.PESTANA_AVANCE);
-    var resumen = hoja ? indiceLeerResumen_(hoja) : null;
-    if (!resumen) return null;
-    var pestana = ss.getSheetByName(INDICE_CONFIG.PESTANA);
-    resumen.urlPestana = pestana ? ss.getUrl() + '#gid=' + pestana.getSheetId() : '';
-    return resumen;
-  } catch (err) {
-    console.warn('[Indice] No se pudo leer el estado: ' + err.message);
-    return null;
+function indiceNormalizarCaso_(caso) {
+  var s = String(caso == null ? '' : caso).trim();
+  if (!/^\d+$/.test(s)) return '';
+  return s.replace(/^0+(?=\d)/, '');
+}
+
+/**
+ * Quita el sufijo de reenvío ("9300_2" → "9300"). Solo si va pegado a un
+ * número y tiene hasta 3 dígitos, para no confundirlo con un número de caso
+ * escrito con guion bajo ("caso_9300" queda igual).
+ */
+function indiceQuitarSufijo_(nombre) {
+  return String(nombre || '').replace(/(\d)_\d{1,3}$/, '$1');
+}
+
+/**
+ * Números de caso que aparecen completos en el nombre de una carpeta. El
+ * sufijo de reenvío "_2", "_3" no cuenta como número aparte.
+ *   "9300" y "9300_2" → 9300;  "caso 9300" y "caso_9300" → 9300;
+ *   "19300" → 19300 (no 9300)
+ */
+function indiceNumerosEnNombre_(nombre) {
+  var s = indiceQuitarSufijo_(nombre);
+  var vistos = {};
+  var res = [];
+  (s.match(/\d+/g) || []).forEach(function(n) {
+    var k = indiceNormalizarCaso_(n);
+    if (!k || vistos[k]) return;
+    vistos[k] = true;
+    res.push(k);
+  });
+  return res;
+}
+
+/**
+ * Directorio por número de caso: para cada número, las carpetas de la raíz
+ * que lo tienen en su nombre (con su ruta y su rama) y los .json que cuelgan
+ * de ellas, en cualquier subcarpeta.
+ *
+ * La rama es APIM si la carpeta está dentro de la subcarpeta APIM de la
+ * raíz; si no, General. La raíz se toma por su ID: su nombre no importa.
+ *
+ * Devuelve { porCaso: { numero: { carpetas: [...], jsons: [...] } },
+ *            casosDeJson: { idJson: [numeros] } }
+ */
+function indiceDirectorioPorCaso_(arbol) {
+  var porCaso = {};
+  var infoCarpeta = {};
+
+  Object.keys(arbol.carpetas).forEach(function(id) {
+    var cadena = indiceCadena_(id, arbol.raizId, arbol.carpetas);
+    if (!cadena || cadena.length === 0) return;
+    var nombre = arbol.carpetas[id][0];
+    var info = {
+      id: id,
+      nombre: nombre,
+      ruta: cadena.map(function(c) { return c.nombre; }).join('/'),
+      segmentos: cadena.map(function(c) { return c.nombre; }),
+      rama: cadena[0].nombre === CONFIG.CARPETA_APIM ? 'APIM' : 'General',
+      conSufijo: indiceQuitarSufijo_(nombre) !== nombre
+    };
+    infoCarpeta[id] = info;
+    indiceNumerosEnNombre_(nombre).forEach(function(num) {
+      if (!porCaso[num]) porCaso[num] = { carpetas: [], jsons: [] };
+      porCaso[num].carpetas.push(info);
+    });
+  });
+
+  var casosDeJson = {};
+  (arbol.jsons || []).forEach(function(j) {
+    var vistos = {};
+    var actual = j[2];
+    var vueltas = 0;
+    while (actual && actual !== arbol.raizId && infoCarpeta[actual] && vueltas < 60) {
+      var info = infoCarpeta[actual];
+      indiceNumerosEnNombre_(info.nombre).forEach(function(num) {
+        if (vistos[num]) return;
+        vistos[num] = true;
+        porCaso[num].jsons.push({
+          id: j[0],
+          nombre: j[1],
+          modificado: j[3] || '',
+          md5: j[4] || '',
+          rama: info.rama,
+          conSufijo: info.conSufijo,
+          carpetaCaso: info.id
+        });
+      });
+      actual = arbol.carpetas[actual][1];
+      vueltas++;
+    }
+    casosDeJson[j[0]] = Object.keys(vistos);
+  });
+
+  Object.keys(porCaso).forEach(function(num) {
+    porCaso[num].carpetas.sort(indiceOrdenCarpetas_);
+  });
+  return { porCaso: porCaso, casosDeJson: casosDeJson };
+}
+
+/**
+ * Orden de carpetas de un caso: primero las sin sufijo, luego por ruta.
+ */
+function indiceOrdenCarpetas_(a, b) {
+  if (a.conSufijo !== b.conSufijo) return a.conSufijo ? 1 : -1;
+  return a.ruta.localeCompare(b.ruta);
+}
+
+/**
+ * Deja un solo .json por contenido. Idénticos = mismo nombre y misma huella
+ * md5: se queda el de la carpeta sin "_N" y, si empatan, el más reciente.
+ * Mismo nombre con contenido distinto: quedan todos. Sin huella, cada
+ * archivo cuenta como distinto. Ordena por nombre y, dentro del nombre, del
+ * más reciente al más viejo.
+ */
+function indiceQuitarRepetidos_(jsons) {
+  var elegidos = {};
+  var orden = [];
+  jsons.forEach(function(j) {
+    var clave = j.md5 ? j.nombre + '|' + j.md5 : 'id|' + j.id;
+    var actual = elegidos[clave];
+    if (!actual) {
+      elegidos[clave] = j;
+      orden.push(clave);
+      return;
+    }
+    if (actual.id === j.id) return;
+    var mejor = (actual.conSufijo !== j.conSufijo)
+      ? (actual.conSufijo ? j : actual)
+      : (String(j.modificado) > String(actual.modificado) ? j : actual);
+    elegidos[clave] = mejor;
+  });
+  var res = orden.map(function(k) { return elegidos[k]; });
+  res.sort(function(a, b) {
+    var n = a.nombre.localeCompare(b.nombre);
+    if (n !== 0) return n;
+    return String(b.modificado).localeCompare(String(a.modificado));
+  });
+  return res;
+}
+
+/**
+ * JSON de un caso, de todas sus carpetas y ramas, sin repetir idénticos.
+ */
+function indiceJsonDelCaso_(entradaCaso) {
+  return entradaCaso ? indiceQuitarRepetidos_(entradaCaso.jsons) : [];
+}
+
+/**
+ * Carpeta(s) de una fila para la columna "Carpeta copiada".
+ *   1. Por ruta desde la raíz: [APIM/]Servicio/Caso y sus reenvíos Caso_N.
+ *   2. De respaldo, por número de caso, solo en la rama de la fila (API o
+ *      APIM dentro de APIM/; las demás, fuera).
+ * No devuelve nada si la fila ya enlaza una carpeta de nuestra raíz en la
+ * columna C o D.
+ *
+ * Devuelve { por: 'ruta' | 'numero' | null, carpetas: [info], yaEnlazada }.
+ */
+function indiceCarpetaDeFila_(fila, arbol, directorio) {
+  var yaEnlazada = (fila.ids || []).some(function(id) { return !!arbol.carpetas[id]; });
+  if (yaEnlazada) return { por: null, carpetas: [], yaEnlazada: true };
+
+  var caso = indiceNormalizarCaso_(fila.caso);
+  var entrada = caso ? directorio.porCaso[caso] : null;
+  if (!entrada) return { por: null, carpetas: [], yaEnlazada: false };
+
+  var rama = esComponenteAPIM(String(fila.componente || '').trim()) ? 'APIM' : 'General';
+  var enRama = entrada.carpetas.filter(function(c) { return c.rama === rama; });
+
+  var servicio = indiceLimpiarServicio_(fila.servicio);
+  var largo = rama === 'APIM' ? 3 : 2;
+  var porRuta = enRama.filter(function(c) {
+    var s = c.segmentos;
+    if (s.length !== largo || s[largo - 2] !== servicio) return false;
+    return indiceNormalizarCaso_(indiceQuitarSufijo_(s[largo - 1])) === caso;
+  });
+  if (porRuta.length > 0) return { por: 'ruta', carpetas: porRuta, yaEnlazada: false };
+
+  // Por número: solo las de más arriba (una subcarpeta con el mismo número
+  // dentro de otra ya encontrada no se repite).
+  var ids = {};
+  enRama.forEach(function(c) { ids[c.id] = true; });
+  var deArriba = enRama.filter(function(c) {
+    var padre = arbol.carpetas[c.id][1];
+    var vueltas = 0;
+    while (padre && padre !== arbol.raizId && arbol.carpetas[padre] && vueltas < 60) {
+      if (ids[padre]) return false;
+      padre = arbol.carpetas[padre][1];
+      vueltas++;
+    }
+    return true;
+  });
+  if (deArriba.length > 0) return { por: 'numero', carpetas: deArriba, yaEnlazada: false };
+  return { por: null, carpetas: [], yaEnlazada: false };
+}
+
+/**
+ * .json que cuelgan de una carpeta de nuestra raíz, en cualquier nivel.
+ */
+function indiceJsonBajoCarpeta_(arbol, carpetaId) {
+  return (arbol.jsons || []).filter(function(j) {
+    return indiceCadenaContiene_(j[2], carpetaId, arbol);
+  }).map(function(j) {
+    return { id: j[0], nombre: j[1], modificado: j[3] || '', md5: j[4] || '', conSufijo: false };
+  });
+}
+
+function indiceCadenaContiene_(desdeId, buscadoId, arbol) {
+  var actual = desdeId;
+  var vueltas = 0;
+  while (actual && vueltas < 60) {
+    if (actual === buscadoId) return true;
+    if (actual === arbol.raizId || !arbol.carpetas[actual]) return false;
+    actual = arbol.carpetas[actual][1];
+    vueltas++;
   }
+  return false;
+}
+
+/**
+ * Qué va en la columna N de una fila: los links de sus JSON o el motivo.
+ *   1. JSON de todas las carpetas del caso en nuestra raíz.
+ *   2. Si el caso no tiene carpeta: links de C y D. Si apuntan a nuestra
+ *      raíz (copia con otro nombre), sus JSON; si son originales, los JSON
+ *      encontrados en ellos.
+ *   3. Si no hay JSON, el motivo.
+ *
+ * originales: resultado del recorrido de originales, o null si todavía no
+ * se revisaron: { estados: { id: 'carpeta' | 'json' | 'sin_acceso' | 'otro' },
+ *                 carpetas: { id: [nombre, padre] }, jsons: [[id, nombre, padre, mod, md5]] }
+ *
+ * Devuelve { links: [url], motivo: texto o null, fuente }, o { pendiente }
+ * si la fila tiene originales que todavía no se revisaron.
+ */
+function indiceResultadoFila_(fila, arbol, directorio, originales) {
+  var caso = indiceNormalizarCaso_(fila.caso);
+  var entrada = caso ? directorio.porCaso[caso] : null;
+
+  if (entrada && entrada.carpetas.length > 0) {
+    var delCaso = indiceJsonDelCaso_(entrada);
+    if (delCaso.length > 0) {
+      return { links: delCaso.map(function(j) { return indiceUrlArchivo_(j.id); }), motivo: null, fuente: 'caso' };
+    }
+    return { links: [], motivo: INDICE_MOTIVOS.carpeta_sin_json, fuente: 'caso' };
+  }
+
+  var ids = fila.ids || [];
+  var encontrados = [];
+  var hayNuestra = false;
+  var haySinAcceso = false;
+  var hayOriginalLeido = false;
+  var hayPendiente = false;
+  ids.forEach(function(id) {
+    if (arbol.carpetas[id]) {
+      hayNuestra = true;
+      encontrados = encontrados.concat(indiceJsonBajoCarpeta_(arbol, id));
+      return;
+    }
+    var estado = originales ? originales.estados[id] : null;
+    if (!estado) {
+      hayPendiente = true;
+      return;
+    }
+    if (estado === 'sin_acceso') {
+      haySinAcceso = true;
+      return;
+    }
+    hayOriginalLeido = true;
+    (originales.jsons || []).forEach(function(j) {
+      if (indiceOrigenDeJson_(j, originales).origenes.indexOf(id) === -1) return;
+      encontrados.push({ id: j[0], nombre: j[1], modificado: j[3] || '', md5: j[4] || '', conSufijo: false });
+    });
+  });
+
+  if (hayPendiente) return { pendiente: true, links: [], motivo: null, fuente: 'links' };
+
+  var unicos = indiceQuitarRepetidos_(encontrados);
+  if (unicos.length > 0) {
+    return { links: unicos.map(function(j) { return indiceUrlArchivo_(j.id); }), motivo: null, fuente: 'links' };
+  }
+  var motivo;
+  if (hayNuestra) motivo = INDICE_MOTIVOS.carpeta_sin_json;
+  else if (haySinAcceso) motivo = INDICE_MOTIVOS.original_sin_acceso;
+  else if (hayOriginalLeido) motivo = INDICE_MOTIVOS.original_sin_json;
+  else motivo = INDICE_MOTIVOS.sin_carpeta_ni_link;
+  return { links: [], motivo: motivo, fuente: 'links' };
 }
 
 // ── Recorrido de Drive ────────────────────────────────────────────────
@@ -565,7 +434,7 @@ function leerEstadoIndiceJson_() {
 function indiceListarHijos_(carpetaId, driveId, todasLasUnidades) {
   var params = {
     q: "'" + carpetaId + "' in parents and trashed = false",
-    fields: 'nextPageToken,files(id,name,mimeType,modifiedTime)',
+    fields: 'nextPageToken,files(id,name,mimeType,modifiedTime,md5Checksum)',
     pageSize: 1000,
     supportsAllDrives: true,
     includeItemsFromAllDrives: true
@@ -596,13 +465,13 @@ function indiceListarHijos_(carpetaId, driveId, todasLasUnidades) {
  * esperar; el paso queda para la próxima parte.
  */
 function indiceAvanzarOriginal_(O, cuenta) {
-  function agregarJson(id, nombre, padre, modificado) {
+  function agregarJson(id, nombre, padre, modificado, md5) {
     if (O.posJson[id] !== undefined) {
       if (padre && !O.jsons[O.posJson[id]][2]) O.jsons[O.posJson[id]][2] = padre;
       return;
     }
     O.posJson[id] = O.jsons.length;
-    O.jsons.push([id, nombre, padre, modificado || '']);
+    O.jsons.push([id, nombre, padre, modificado || '', md5 || '']);
     cuenta.jsons++;
   }
 
@@ -610,7 +479,7 @@ function indiceAvanzarOriginal_(O, cuenta) {
     var id = O.pendientes.shift();
     var f;
     try {
-      f = Drive.Files.get(id, { fields: 'id,name,mimeType,modifiedTime', supportsAllDrives: true });
+      f = Drive.Files.get(id, { fields: 'id,name,mimeType,modifiedTime,md5Checksum', supportsAllDrives: true });
     } catch (err) {
       if (indiceEsLimiteDeCuota_(err)) {
         O.pendientes.unshift(id);
@@ -631,7 +500,7 @@ function indiceAvanzarOriginal_(O, cuenta) {
       }
     } else if (/\.json$/i.test(f.name || '')) {
       O.estados[id] = 'json';
-      agregarJson(id, f.name, '', f.modifiedTime);
+      agregarJson(id, f.name, '', f.modifiedTime, f.md5Checksum);
     } else {
       O.estados[id] = 'otro';
     }
@@ -661,7 +530,7 @@ function indiceAvanzarOriginal_(O, cuenta) {
           O.carpetas[h.id][1] = carpetaId;
         }
       } else if (/\.json$/i.test(h.name || '')) {
-        agregarJson(h.id, h.name, carpetaId, h.modifiedTime);
+        agregarJson(h.id, h.name, carpetaId, h.modifiedTime, h.md5Checksum);
       }
     });
     cuenta.carpetas++;
@@ -674,15 +543,314 @@ function indiceEsLimiteDeCuota_(err) {
   return /rate limit|quota|429|userRateLimitExceeded|backendError/i.test(msg);
 }
 
-// ── Lectura del Sheet y escritura de la pestaña ───────────────────────
+// ── Escritura de las columnas N y O ───────────────────────────────────
 
-function indiceLeerFilasSheet_(ss) {
-  var hoja = ss.getSheetByName(obtenerSheetTab());
-  if (!hoja) throw new Error('No existe la pestaña de solicitudes configurada.');
+// Columna O, a continuación de Archivos JSON (N). El envío y los reintentos
+// no la usan.
+var INDICE_COL_CARPETA = 15;
+
+var INDICE_TITULO_CARPETA = 'Carpeta copiada';
+
+function indiceEsLineaLink_(linea) {
+  return /^https?:\/\/\S+$/i.test(String(linea).trim());
+}
+
+/**
+ * Separa el contenido de una celda de la columna N en links (líneas que
+ * son una URL) y motivos (cualquier otra línea con texto).
+ */
+function indiceAnalizarCeldaN_(texto) {
+  var res = { links: [], motivos: [] };
+  String(texto == null ? '' : texto).split('\n').forEach(function(linea) {
+    var l = linea.trim();
+    if (!l) return;
+    if (indiceEsLineaLink_(l)) res.links.push(l);
+    else res.motivos.push(l);
+  });
+  return res;
+}
+
+/**
+ * Qué hacer con la celda N de una fila, según lo que ya tiene:
+ *   vacía                → escribir el resultado (links o motivo)
+ *   solo links           → no tocar
+ *   links y motivo       → limpiar: dejar solo los links
+ *   solo motivo          → no tocar, salvo al revisar avisos
+ * Devuelve { accion: 'escribir' | 'limpiar' | 'nada', texto, tipo }.
+ */
+function indiceDecidirCeldaN_(textoActual, resultado, revisarAvisos) {
+  var actual = indiceAnalizarCeldaN_(textoActual);
+  if (actual.links.length > 0 && actual.motivos.length > 0) {
+    return { accion: 'limpiar', texto: actual.links.join('\n'), tipo: 'limpiada' };
+  }
+  if (actual.links.length > 0) return { accion: 'nada', tipo: 'yaTenia' };
+  var vacia = actual.motivos.length === 0;
+  if (!vacia && !revisarAvisos) return { accion: 'nada', tipo: 'conMotivo' };
+  if (!resultado || resultado.pendiente) return { accion: 'nada', tipo: 'pendiente' };
+  if (resultado.links.length > 0) {
+    return { accion: 'escribir', texto: resultado.links.join('\n'), tipo: 'links' };
+  }
+  if (!vacia && actual.motivos.join('\n') === resultado.motivo) {
+    return { accion: 'nada', tipo: 'mismoMotivo' };
+  }
+  return { accion: 'escribir', texto: resultado.motivo, tipo: 'motivo' };
+}
+
+/**
+ * Celda de la columna "Carpeta copiada": una línea por carpeta, cada una
+ * con su link. Las encontradas solo por número de caso lo dicen.
+ */
+function indiceCeldaCarpeta_(carpetaDeFila) {
+  var prefijo = carpetaDeFila.por === 'numero' ? 'Por número de caso: ' : '';
+  var lineas = carpetaDeFila.carpetas.map(function(c) { return prefijo + c.ruta; });
+  var builder = SpreadsheetApp.newRichTextValue().setText(lineas.join('\n'));
+  var inicio = 0;
+  carpetaDeFila.carpetas.forEach(function(c, i) {
+    builder.setLinkUrl(inicio, inicio + lineas[i].length, indiceUrlCarpeta_(c.id));
+    inicio += lineas[i].length + 1;
+  });
+  return builder.build();
+}
+
+/**
+ * Escribe un bloque de filas en las columnas N y O con el lock tomado.
+ * Antes de escribir vuelve a leer cada fila: si cambió de caso o servicio
+ * (alguien ordenó o insertó filas) se salta. La columna O solo se escribe
+ * si está vacía. Devuelve false si no consiguió el lock.
+ *
+ * bloque: [{ fila, caso, servicio, resultado, carpeta, soloCarpeta }]
+ *   ordenado por fila, con resultado de indiceResultadoFila_ y carpeta de
+ *   indiceCarpetaDeFila_. Con soloCarpeta la columna N no se mira.
+ */
+function indiceEscribirBloqueFilas_(ss, bloque, cuenta, revisarAvisos) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return false;
+  try {
+    var hoja = ss.getSheetByName(obtenerSheetTab());
+    if (!hoja) throw new Error('No existe la pestaña de solicitudes configurada.');
+    var ultima = hoja.getLastRow();
+    var desde = bloque[0].fila;
+    var hasta = Math.min(bloque[bloque.length - 1].fila, ultima);
+
+    var datos = [];
+    var columnaN = [];
+    var columnaO = [];
+    if (hasta >= desde) {
+      var n = hasta - desde + 1;
+      datos = hoja.getRange(desde, SHEET_COLS.NUMERO_CASO, n, 2).getValues();
+      columnaN = hoja.getRange(desde, SHEET_COLS.ARCHIVOS_JSON, n, 1).getValues();
+      columnaO = hoja.getRange(desde, INDICE_COL_CARPETA, n, 1).getValues();
+    }
+
+    var cambiosN = [];
+    var cambiosO = [];
+    bloque.forEach(function(t) {
+      var i = t.fila - desde;
+      if (t.fila > hasta ||
+          String(datos[i][0] || '').trim() !== t.caso ||
+          String(datos[i][1] || '') !== t.servicio) {
+        cuenta.cambiaron = (cuenta.cambiaron || 0) + 1;
+        return;
+      }
+      if (!t.soloCarpeta) {
+        var decision = indiceDecidirCeldaN_(columnaN[i][0], t.resultado, revisarAvisos);
+        if (decision.accion !== 'nada') {
+          cambiosN.push({ fila: t.fila, valor: construirCeldaConEnlaces(decision.texto) });
+        }
+        cuenta[decision.tipo] = (cuenta[decision.tipo] || 0) + 1;
+      }
+
+      if (t.carpeta && t.carpeta.carpetas.length > 0 && String(columnaO[i][0] || '').trim() === '') {
+        cambiosO.push({ fila: t.fila, valor: indiceCeldaCarpeta_(t.carpeta) });
+        cuenta.carpetas = (cuenta.carpetas || 0) + 1;
+      }
+    });
+
+    if (cambiosN.length > 0) {
+      indiceTituloSiFalta_(hoja, SHEET_COLS.ARCHIVOS_JSON, SHEET_HEADERS[SHEET_COLS.ARCHIVOS_JSON - 1]);
+      indiceEscribirTramos_(hoja, SHEET_COLS.ARCHIVOS_JSON, cambiosN);
+    }
+    if (cambiosO.length > 0) {
+      indiceTituloSiFalta_(hoja, INDICE_COL_CARPETA, INDICE_TITULO_CARPETA);
+      indiceEscribirTramos_(hoja, INDICE_COL_CARPETA, cambiosO);
+    }
+    if (cambiosN.length > 0 || cambiosO.length > 0) SpreadsheetApp.flush();
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Título en la fila 1 de una columna, solo si la fila 1 tiene encabezados
+ * (A1 con texto) y esa celda está vacía.
+ */
+function indiceTituloSiFalta_(hoja, col, titulo) {
+  var celda = hoja.getRange(1, col);
+  if (String(hoja.getRange(1, 1).getValue()).trim() !== '' &&
+      String(celda.getValue()).trim() === '') {
+    celda.setValue(titulo).setFontWeight('bold');
+  }
+}
+
+/**
+ * Escribe valores enriquecidos en una columna; las filas seguidas van juntas.
+ */
+function indiceEscribirTramos_(hoja, col, cambios) {
+  var tramo = [];
+  function escribir() {
+    if (tramo.length === 0) return;
+    hoja.getRange(tramo[0].fila, col, tramo.length, 1)
+      .setRichTextValues(tramo.map(function(c) { return [c.valor]; }));
+    tramo = [];
+  }
+  cambios.forEach(function(c) {
+    if (tramo.length > 0 && c.fila !== tramo[tramo.length - 1].fila + 1) escribir();
+    tramo.push(c);
+  });
+  escribir();
+}
+
+/**
+ * Formato de las columnas N y O desde la fila 2: el texto se recorta dentro
+ * de su celda (no se desborda ni cambia la altura de la fila) y se alinea a
+ * la izquierda. Solo formato.
+ */
+function indiceFormatoColumnas_(hoja) {
+  var ultima = Math.max(hoja.getLastRow(), 2);
+  hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, ultima - 1, 2)
+    .setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP)
+    .setHorizontalAlignment('left');
+}
+
+// ── Pestaña "JSON sin fila" ───────────────────────────────────────────
+
+var INDICE_PESTANA_SIN_FILA = 'JSON sin fila';
+
+var INDICE_ENCABEZADOS_SIN_FILA = ['Archivo', 'Ruta', 'Modificado', 'Número en la ruta', 'Por qué no tiene fila'];
+
+/**
+ * JSON de nuestra raíz que ninguna fila usa: ninguna carpeta de su ruta
+ * tiene un número de caso que exista en el Sheet, y ninguna fila enlaza en
+ * C o D una carpeta que lo contenga (ni al archivo). Un archivo repetido en
+ * dos carpetas aparece dos veces: son dos ubicaciones. Ordenado por ruta.
+ */
+function indiceJsonSinFila_(arbol, directorio, filas) {
+  var casos = {};
+  var enlazados = {};
+  filas.forEach(function(f) {
+    var c = indiceNormalizarCaso_(f.caso);
+    if (c) casos[c] = true;
+    (f.ids || []).forEach(function(id) { enlazados[id] = true; });
+  });
+
+  var lista = [];
+  (arbol.jsons || []).forEach(function(j) {
+    var numeros = directorio.casosDeJson[j[0]] || [];
+    if (numeros.some(function(n) { return casos[n]; })) return;
+    if (enlazados[j[0]]) return;
+    var actual = j[2];
+    var vueltas = 0;
+    while (actual && actual !== arbol.raizId && arbol.carpetas[actual] && vueltas < 60) {
+      if (enlazados[actual]) return;
+      actual = arbol.carpetas[actual][1];
+      vueltas++;
+    }
+    var cadena = indiceCadena_(j[2], arbol.raizId, arbol.carpetas) || [];
+    var motivo;
+    if (numeros.length === 1) motivo = 'Ninguna fila tiene el caso ' + numeros[0];
+    else if (numeros.length > 1) motivo = 'Ninguna fila tiene los casos ' + numeros.join(', ');
+    else motivo = 'La carpeta no tiene número de caso y ninguna fila la enlaza';
+    lista.push({
+      id: j[0],
+      nombre: j[1],
+      ruta: cadena.map(function(c) { return c.nombre; }).join('/') || '(carpeta raíz)',
+      modificado: j[3] || '',
+      numeros: numeros.join(', '),
+      motivo: motivo
+    });
+  });
+  lista.sort(function(a, b) {
+    var r = a.ruta.localeCompare(b.ruta);
+    return r !== 0 ? r : a.nombre.localeCompare(b.nombre);
+  });
+  return lista;
+}
+
+/**
+ * Escribe la pestaña "JSON sin fila": la crea si no existe, borra su
+ * contenido y escribe la lista actual con filtro.
+ */
+function indiceEscribirSinFila_(ss, lista) {
+  var hoja = ss.getSheetByName(INDICE_PESTANA_SIN_FILA) || ss.insertSheet(INDICE_PESTANA_SIN_FILA);
+  var filtro = hoja.getFilter();
+  if (filtro) filtro.remove();
+  hoja.clearContents();
+
+  var nCols = INDICE_ENCABEZADOS_SIN_FILA.length;
+  hoja.getRange(1, 1, 1, nCols).setValues([INDICE_ENCABEZADOS_SIN_FILA]).setFontWeight('bold');
+  hoja.setFrozenRows(1);
+  if (lista.length === 0) {
+    hoja.getRange(2, 1).setValue('Todos los JSON de la carpeta raíz están relacionados con alguna fila.');
+    return;
+  }
+
+  hoja.getRange(2, 1, lista.length, nCols).setValues(lista.map(function(s) {
+    return ['', sanitizarParaSheet(s.ruta), s.modificado ? new Date(s.modificado) : '',
+      s.numeros || '(ninguno)', s.motivo];
+  }));
+  hoja.getRange(2, 1, lista.length, 1).setRichTextValues(lista.map(function(s) {
+    return [SpreadsheetApp.newRichTextValue().setText(s.nombre).setLinkUrl(indiceUrlArchivo_(s.id)).build()];
+  }));
+  hoja.getRange(2, 3, lista.length, 1).setNumberFormat('dd/mm/yyyy hh:mm');
+  hoja.getRange(1, 1, lista.length + 1, nCols).createFilter();
+}
+
+// ── Búsqueda por filas ────────────────────────────────────────────────
+//
+// Una ejecución recorre la raíz (en memoria), lee el Sheet y resuelve las
+// filas de arriba hacia abajo, escribiendo cada bloque. El avance es la
+// propia columna N: la siguiente ejecución empieza en la primera N vacía.
+// Lo único que se guarda es una nota corta por Sheet en las propiedades del
+// proyecto (compartidas por todos los usuarios, no se ven en el Sheet ni en
+// Drive): turno, modo, fila para "revisar avisos" y contadores.
+
+var INDICE_BUSQUEDA = {
+  PREFIJO_NOTA: 'INDICE_NOTA_',
+  MARGEN_FILA_MS: 15000,
+  REINTENTOS_LOCK: 3,
+  HANDLER: 'continuarBusquedaJson',
+  PRESUPUESTO_MS: 5 * 60 * 1000,
+  MAX_PARTES: 20,
+  // Si Google rechaza programar la parte siguiente por el límite de una vez
+  // por hora, se programa para dentro de este tiempo.
+  ESPERA_HORA_MS: 61 * 60 * 1000
+};
+
+function indiceLeerNota_(sheetId) {
+  var texto = PropertiesService.getScriptProperties().getProperty(INDICE_BUSQUEDA.PREFIJO_NOTA + sheetId);
+  if (!texto) return null;
+  try {
+    return JSON.parse(texto);
+  } catch (err) {
+    return null;
+  }
+}
+
+function indiceGuardarNota_(sheetId, nota) {
+  PropertiesService.getScriptProperties().setProperty(INDICE_BUSQUEDA.PREFIJO_NOTA + sheetId, JSON.stringify(nota));
+}
+
+/**
+ * Filas del Sheet con lo necesario para buscar y escribir: caso, servicio,
+ * componente, links de C y D, y el texto actual de N y O.
+ */
+function indiceLeerFilasCompletas_(hoja) {
   var ultima = hoja.getLastRow();
   if (ultima < 2) return [];
   var n = ultima - 1;
   var valores = hoja.getRange(2, 1, n, SHEET_NUM_COLS).getValues();
+  var columnaO = hoja.getRange(2, INDICE_COL_CARPETA, n, 1).getValues();
   var richC = hoja.getRange(2, SHEET_COLS.DRIVE, n, 1).getRichTextValues();
   var richD = hoja.getRange(2, SHEET_COLS.REPOSITORIO, n, 1).getRichTextValues();
   var filas = [];
@@ -695,630 +863,735 @@ function indiceLeerFilasSheet_(ss) {
       caso: caso,
       servicio: String(v[SHEET_COLS.SERVICIO - 1] || ''),
       componente: String(v[SHEET_COLS.COMPONENTE - 1] || ''),
-      ambiente: String(v[SHEET_COLS.AMBIENTE - 1] || ''),
-      estado: String(v[SHEET_COLS.ESTADO - 1] || ''),
-      ids: indiceIdsDeCelda_(richC[i][0]).concat(indiceIdsDeCelda_(richD[i][0]))
+      ids: indiceIdsDeCelda_(richC[i][0]).concat(indiceIdsDeCelda_(richD[i][0])),
+      textoN: String(v[SHEET_COLS.ARCHIVOS_JSON - 1] || ''),
+      textoO: String(columnaO[i][0] || '')
     });
   }
   return filas;
 }
 
 /**
- * Escribe la pestaña del índice. No la borra ni la reemplaza (eso rompería
- * fórmulas o filtros que apunten a ella): limpia su contenido y escribe.
+ * Qué filas trabajar, de arriba hacia abajo:
+ *   normal: N vacía (buscar) o mixta, con links y motivo (limpiar).
+ *   revisar: N con solo motivo, desde la fila indicada.
+ * Además, cualquier fila con la O vacía cuya carpeta se encontró (no
+ * necesita Drive). Devuelve [{ fila, necesitaN, soloCarpeta, ... }].
  */
-function indiceEscribirPestana_(ss, filas) {
-  var hoja = ss.getSheetByName(INDICE_CONFIG.PESTANA);
-  if (!hoja) hoja = ss.insertSheet(INDICE_CONFIG.PESTANA);
-
-  var filtro = hoja.getFilter();
-  if (filtro) filtro.remove();
-  hoja.clearContents();
-
-  var nCols = INDICE_ENCABEZADOS.length;
-  var encabezado = hoja.getRange(1, 1, 1, nCols);
-  encabezado.setValues([INDICE_ENCABEZADOS]).setFontWeight('bold');
-  hoja.setFrozenRows(1);
-
-  if (filas.length === 0) {
-    hoja.getRange(2, 1).setValue('No se encontraron archivos .json bajo la carpeta raíz.');
-    return;
-  }
-
-  var valores = filas.map(function(f) {
-    return [
-      sanitizarParaSheet(f.servicio),
-      sanitizarParaSheet(f.caso),
-      f.origen || 'Copia',
-      sanitizarParaSheet(f.carpetaEnvio),
-      f.rama,
-      sanitizarParaSheet(f.resto),
-      '',
-      f.modificado ? new Date(f.modificado) : '',
-      sanitizarParaSheet(f.ambiente),
-      sanitizarParaSheet(f.componente),
-      sanitizarParaSheet(f.estado),
-      f.filas,
-      f.cruce,
-      f.url
-    ];
-  });
-  hoja.getRange(2, 1, filas.length, nCols).setValues(valores);
-
-  var colArchivo = INDICE_ENCABEZADOS.indexOf('Archivo') + 1;
-  var links = filas.map(function(f) {
-    return [SpreadsheetApp.newRichTextValue().setText(f.archivo).setLinkUrl(f.url).build()];
-  });
-  hoja.getRange(2, colArchivo, filas.length, 1).setRichTextValues(links);
-  hoja.getRange(2, INDICE_ENCABEZADOS.indexOf('Modificado') + 1, filas.length, 1)
-    .setNumberFormat('dd/mm/yyyy hh:mm');
-
-  hoja.getRange(1, 1, filas.length + 1, nCols).createFilter();
-}
-
-/**
- * Pestaña con las filas sin copia cuyo original no se pudo abrir (sin
- * acceso o borrado), para pedir acceso al dueño. Se limpia y se reescribe.
- */
-function indiceEscribirSinAcceso_(ss, lista) {
-  var hoja = ss.getSheetByName(INDICE_CONFIG.PESTANA_SIN_ACCESO) ||
-    ss.insertSheet(INDICE_CONFIG.PESTANA_SIN_ACCESO);
-  var filtro = hoja.getFilter();
-  if (filtro) filtro.remove();
-  hoja.clearContents();
-
-  var nCols = INDICE_ENCABEZADOS_SIN_ACCESO.length;
-  hoja.getRange(1, 1, 1, nCols).setValues([INDICE_ENCABEZADOS_SIN_ACCESO]).setFontWeight('bold');
-  hoja.setFrozenRows(1);
-  if (lista.length === 0) {
-    hoja.getRange(2, 1).setValue('Todas las filas sin copia tienen acceso a sus originales.');
-    return;
-  }
-
-  hoja.getRange(2, 1, lista.length, nCols).setValues(lista.map(function(s) {
-    return [s.fila, sanitizarParaSheet(s.caso), sanitizarParaSheet(s.servicio),
-      sanitizarParaSheet(s.componente), sanitizarParaSheet(s.estado), ''];
-  }));
-  hoja.getRange(2, nCols, lista.length, 1).setRichTextValues(lista.map(function(s) {
-    return [SpreadsheetApp.newRichTextValue().setText(s.url).setLinkUrl(s.url).build()];
-  }));
-  hoja.getRange(1, 1, lista.length + 1, nCols).createFilter();
-}
-
-/**
- * Escribe un bloque de la columna N con el lock tomado. Antes de escribir
- * vuelve a leer cada fila: si cambió de caso o servicio (alguien ordenó o
- * insertó filas) se salta, y si la N ya tiene algo no se toca.
- * Devuelve false si no consiguió el lock; el bloque queda para después.
- */
-function indiceEscribirBloqueN_(ss, bloque, cuenta) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) return false;
-  try {
-    var hoja = ss.getSheetByName(obtenerSheetTab());
-    if (!hoja) throw new Error('No existe la pestaña de solicitudes configurada.');
-    var ultima = hoja.getLastRow();
-    var desde = bloque[0].fila;
-    var hasta = Math.min(bloque[bloque.length - 1].fila, ultima);
-
-    var datos = [];
-    var columnaN = [];
-    if (hasta >= desde) {
-      var n = hasta - desde + 1;
-      datos = hoja.getRange(desde, SHEET_COLS.NUMERO_CASO, n, 2).getValues();
-      columnaN = hoja.getRange(desde, SHEET_COLS.ARCHIVOS_JSON, n, 1).getValues();
-    }
-
-    var escribir = [];
-    bloque.forEach(function(t) {
-      var i = t.fila - desde;
-      if (t.fila > hasta ||
-          String(datos[i][0] || '').trim() !== t.caso ||
-          String(datos[i][1] || '') !== t.servicio) {
-        cuenta.cambiaron++;
-      } else if (String(columnaN[i][0] || '').trim() !== '') {
-        cuenta.yaTenian++;
-      } else {
-        escribir.push(t);
-      }
-    });
-    if (escribir.length === 0) return true;
-
-    var celdaHeader = hoja.getRange(1, SHEET_COLS.ARCHIVOS_JSON);
-    if (String(hoja.getRange(1, 1).getValue()).trim() !== '' &&
-        String(celdaHeader.getValue()).trim() === '') {
-      celdaHeader.setValue(SHEET_HEADERS[SHEET_COLS.ARCHIVOS_JSON - 1]).setFontWeight('bold');
-    }
-
-    // Filas seguidas se escriben juntas.
-    var tramo = [];
-    function escribirTramo() {
-      if (tramo.length === 0) return;
-      hoja.getRange(tramo[0].fila, SHEET_COLS.ARCHIVOS_JSON, tramo.length, 1)
-        .setRichTextValues(tramo.map(function(t) {
-          return [construirCeldaConEnlaces(indiceTextoColumnaN_(t.urls))];
-        }));
-      cuenta.llenadas += tramo.length;
-      tramo = [];
-    }
-    escribir.forEach(function(t) {
-      if (tramo.length > 0 && t.fila !== tramo[tramo.length - 1].fila + 1) escribirTramo();
-      tramo.push(t);
-    });
-    escribirTramo();
-    SpreadsheetApp.flush();
-    return true;
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-// ── Avance por partes ─────────────────────────────────────────────────
-//
-// Mismo esquema que Reintentos.gs: la acción del panel solo prepara y
-// programa un activador .after(); el trabajo pesado lo hace el activador,
-// que tiene minutos y no los 30 s de una acción de tarjeta. Cada parte
-// borra su propio activador al empezar y, si queda trabajo, programa el
-// siguiente al terminar.
-
-/**
- * Empieza un índice (nuevo o actualización) y deja el trabajo listo para
- * la primera parte. La pestaña no se borra: si ya tiene datos, se quedan
- * visibles hasta que la última parte los reemplaza.
- * Devuelve { ocupado } si hay una parte corriendo.
- */
-function iniciarIndiceJson_(ss) {
-  var raizId = obtenerCarpetaRaizId();
-  if (!raizId) throw new Error('No hay carpeta raíz configurada.');
-  var raiz = Drive.Files.get(raizId, { fields: 'id,driveId', supportsAllDrives: true });
-
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) return { ocupado: true };
-  try {
-    var hoja = indicePestanaAvance_(ss);
-    var anterior = indiceLeerResumen_(hoja);
-    if (anterior && anterior.ocupadoHasta > Date.now()) {
-      return { ocupado: true, resumen: anterior };
-    }
-
-    if (!ss.getSheetByName(INDICE_CONFIG.PESTANA)) ss.insertSheet(INDICE_CONFIG.PESTANA);
-
-    var resumen = {
-      etapa: 'recorrer',
-      raizId: raizId,
-      driveId: raiz.driveId || '',
-      iniciadoEn: Date.now(),
-      parte: 0,
-      carpetasRevisadas: 0,
-      jsonsEncontrados: 0,
-      carpetasPendientes: 1,
-      errores: 0,
-      historial: []
-    };
-    indiceGuardarTodo_(hoja, resumen, { cola: [raizId], carpetas: {}, jsons: [] });
-    SpreadsheetApp.flush();
-    return { resumen: resumen, hoja: hoja };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-/**
- * Hace una parte del índice dentro del presupuesto.
- *
- * opciones.origen: 'automática' (activador) o 'botón' (respaldo desde el
- *   panel), para el historial.
- * opciones.programarSiguiente: si queda trabajo, programa la parte
- *   siguiente al terminar.
- * opciones.margenEscrituraMs: tiempo mínimo que debe quedar para escribir
- *   la pestaña en esta parte.
- *
- * Devuelve { resumen }, { ocupado } si otra parte tiene el turno, o
- * { sinTrabajo } si no hay un índice a medias.
- */
-function avanzarIndiceJson_(sheetId, presupuestoMs, opciones) {
-  opciones = opciones || {};
-  var inicio = Date.now();
-  var ss = SpreadsheetApp.openById(sheetId);
-  var hoja = indicePestanaAvance_(ss);
-  var margenEscritura = opciones.margenEscrituraMs || INDICE_CONFIG.MARGEN_ESCRITURA_MS;
-
-  // Turno: solo una parte a la vez, aunque la lancen dos personas.
-  var resumen;
-  var trabajo;
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) {
-    return { ocupado: true, resumen: indiceLeerResumen_(hoja) };
-  }
-  try {
-    resumen = indiceLeerResumen_(hoja);
-    if (!resumen || resumen.etapa === 'terminado') return { sinTrabajo: true, resumen: resumen };
-    if (resumen.ocupadoHasta > Date.now()) return { ocupado: true, resumen: resumen };
-    var problema = '';
-    if (resumen.raizId !== obtenerCarpetaRaizId()) {
-      problema = 'La carpeta raíz cambió desde que empezó el índice. Presiona "Empezar de cero".';
+function indiceElegirFilas_(filas, modo, desdeFila, carpetaDe) {
+  var lista = [];
+  filas.forEach(function(f) {
+    var celda = indiceAnalizarCeldaN_(f.textoN);
+    var mixta = celda.links.length > 0 && celda.motivos.length > 0;
+    var necesitaN;
+    if (modo === 'revisar') {
+      necesitaN = celda.links.length === 0 && celda.motivos.length > 0 && f.fila >= (desdeFila || 0);
     } else {
-      trabajo = indiceLeerTrabajo_(hoja);
-      if (!trabajo) problema = 'Se perdió el avance guardado. Presiona "Empezar de cero".';
+      necesitaN = celda.links.length === 0 && celda.motivos.length === 0;
     }
-    if (problema) {
-      resumen.ultimoError = problema;
-      resumen.activador = null;
-      indiceGuardarResumen_(hoja, resumen);
-      return { error: problema, resumen: resumen };
+    var carpeta = carpetaDe ? carpetaDe(f) : null;
+    var necesitaO = !!(carpeta && carpeta.carpetas.length > 0 && !String(f.textoO).trim());
+    if (!necesitaN && !mixta && !necesitaO) return;
+    lista.push({
+      fila: f.fila,
+      caso: f.caso,
+      servicio: f.servicio,
+      componente: f.componente,
+      ids: f.ids,
+      necesitaN: necesitaN,
+      limpiar: mixta,
+      soloCarpeta: !necesitaN && !mixta,
+      carpeta: carpeta
+    });
+  });
+  return lista;
+}
+
+/**
+ * Recorre toda la raíz, una carpeta por consulta, y la deja en memoria.
+ * Si Drive pide esperar, espera y reintenta la misma carpeta.
+ */
+function indiceRecorrerRaiz_(raizId, quedaMs) {
+  var raiz = Drive.Files.get(raizId, { fields: 'id,driveId', supportsAllDrives: true });
+  var arbol = { raizId: raizId, carpetas: {}, jsons: [], errores: 0, completo: true };
+  var cola = [raizId];
+  var esperas = 0;
+  while (cola.length > 0) {
+    if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
+      arbol.completo = false;
+      break;
     }
-
-    resumen.parte++;
-    resumen.ocupadoHasta = Date.now() + presupuestoMs + 60000;
-    resumen.parteEnCurso = { n: resumen.parte, origen: opciones.origen || 'botón', inicio: inicio };
-    resumen.ultimoError = '';
-    if (opciones.origen === 'automática' && resumen.activador) {
-      resumen.activador.corrioEn = inicio;
-    }
-    indiceGuardarResumen_(hoja, resumen);
-    SpreadsheetApp.flush();
-  } finally {
-    lock.releaseLock();
-  }
-  indiceMostrarAvance_(ss, resumen);
-
-  var carpetasAntes = resumen.carpetasRevisadas;
-  var jsonsAntes = resumen.jsonsEncontrados || 0;
-  var ultimoGuardado = Date.now();
-  function quedaMs() { return presupuestoMs - (Date.now() - inicio); }
-
-  try {
-    while (resumen.etapa === 'recorrer' && trabajo.cola.length > 0 &&
-           quedaMs() > INDICE_CONFIG.MARGEN_CONSULTA_MS) {
-      var carpetaId = trabajo.cola.shift();
-      var hijos;
-      try {
-        hijos = indiceListarHijos_(carpetaId, resumen.driveId);
-      } catch (err) {
-        if (indiceEsLimiteDeCuota_(err)) {
-          trabajo.cola.unshift(carpetaId);
-          console.warn('[Indice] Límite de Drive, se sigue en la próxima parte');
-          break;
-        }
-        resumen.errores++;
-        console.warn('[Indice] No se pudo listar una carpeta: ' + err.message);
+    var carpetaId = cola.shift();
+    var hijos;
+    try {
+      hijos = indiceListarHijos_(carpetaId, raiz.driveId || '');
+    } catch (err) {
+      if (indiceEsLimiteDeCuota_(err) && esperas < 5) {
+        esperas++;
+        cola.unshift(carpetaId);
+        Utilities.sleep(2000 * esperas);
         continue;
       }
-      hijos.forEach(function(h) {
-        if (h.mimeType === INDICE_CONFIG.CARPETA_MIME) {
-          trabajo.carpetas[h.id] = [h.name, carpetaId];
-          trabajo.cola.push(h.id);
-        } else if (/\.json$/i.test(h.name || '')) {
-          trabajo.jsons.push([h.id, h.name, carpetaId, h.modifiedTime || '']);
+      arbol.errores++;
+      console.warn('[Indice] No se pudo listar una carpeta: ' + err.message);
+      continue;
+    }
+    hijos.forEach(function(h) {
+      if (h.mimeType === INDICE_CONFIG.CARPETA_MIME) {
+        arbol.carpetas[h.id] = [h.name, carpetaId];
+        cola.push(h.id);
+      } else if (/\.json$/i.test(h.name || '')) {
+        arbol.jsons.push([h.id, h.name, carpetaId, h.modifiedTime || '', h.md5Checksum || '']);
+      }
+    });
+  }
+  return arbol;
+}
+
+/**
+ * Revisa los links originales de una fila que todavía no se miraron en
+ * esta ejecución. Devuelve false si se acabó el tiempo antes de terminar.
+ */
+function indiceRevisarOriginalesDeFila_(fila, arbol, originales, cuentaO, quedaMs) {
+  fila.ids.forEach(function(id) {
+    if (arbol.carpetas[id] || originales.estados[id] || originales.pendientes.indexOf(id) !== -1) return;
+    originales.pendientes.push(id);
+  });
+  var esperas = 0;
+  while (originales.pendientes.length > 0 || originales.cola.length > 0) {
+    if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) return false;
+    if (!indiceAvanzarOriginal_(originales, cuentaO)) {
+      if (esperas >= 5) return false;
+      esperas++;
+      Utilities.sleep(2000 * esperas);
+    }
+  }
+  return true;
+}
+
+/**
+ * Una ejecución de la búsqueda. modo: 'normal' (filas con la N vacía) o
+ * 'revisar' (filas con solo motivo, desde la fila guardada en la nota).
+ *
+ * Devuelve { ocupado, nota } si otra búsqueda tiene el turno, o
+ * { terminado, nota, cuenta } al terminar la ejecución.
+ */
+function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
+  var inicio = Date.now();
+  function quedaMs() { return presupuestoMs - (Date.now() - inicio); }
+  var ss = SpreadsheetApp.openById(sheetId);
+  var hoja = ss.getSheetByName(obtenerSheetTab());
+  if (!hoja) throw new Error('No existe la pestaña de solicitudes configurada.');
+  var raizId = obtenerCarpetaRaizId();
+  if (!raizId) throw new Error('No hay carpeta raíz configurada.');
+
+  // Turno: una sola búsqueda a la vez por Sheet, aunque la lancen dos personas.
+  var nota;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ocupado: true, nota: indiceLeerNota_(sheetId) };
+  try {
+    nota = indiceLeerNota_(sheetId);
+    if (nota && nota.ocupadoHasta > Date.now()) return { ocupado: true, nota: nota };
+    var nueva = !nota || nota.etapa === 'terminado' || nota.modo !== modo;
+    if (nueva) {
+      nota = {
+        modo: modo,
+        etapa: 'buscando',
+        iniciadoEn: inicio,
+        partes: 0,
+        fila: 0,
+        filaActual: 0,
+        ultimaFila: 0,
+        cuenta: {}
+      };
+    }
+    nota.partes++;
+    nota.ocupadoHasta = inicio + presupuestoMs + 60000;
+    nota.parteIniciadaEn = inicio;
+    nota.ultimoError = '';
+    indiceGuardarNota_(sheetId, nota);
+  } finally {
+    lock.releaseLock();
+  }
+
+  var cuenta = nota.cuenta;
+  var cortado = false;
+  try {
+    var inicioRaiz = Date.now();
+    var arbol = indiceRecorrerRaiz_(raizId, quedaMs);
+    console.log('[Indice] Raíz recorrida: ' + Object.keys(arbol.carpetas).length + ' carpetas, ' +
+      arbol.jsons.length + ' JSON, en ' + formatearDuracionIndice_(Date.now() - inicioRaiz) +
+      (arbol.completo ? '' : ' (incompleta)'));
+    if (!arbol.completo) {
+      throw new Error('La carpeta raíz es demasiado grande para recorrerla en una parte (se revisaron ' +
+        Object.keys(arbol.carpetas).length + ' carpetas en ' + formatearDuracionIndice_(Date.now() - inicioRaiz) +
+        '). Avisar para ajustar la búsqueda.');
+    }
+    cuenta.erroresDrive = arbol.errores;
+    var directorio = indiceDirectorioPorCaso_(arbol);
+    var filas = indiceLeerFilasCompletas_(hoja);
+    nota.ultimaFila = filas.length ? filas[filas.length - 1].fila : 0;
+
+    var lista = indiceElegirFilas_(filas, modo, nota.fila, function(f) {
+      return indiceCarpetaDeFila_(f, arbol, directorio);
+    });
+
+    var originales = { estados: {}, carpetas: {}, jsons: [], posJson: {}, pendientes: [], cola: [] };
+    var cuentaO = { revisados: 0, conAcceso: 0, sinAcceso: 0, carpetas: 0, jsons: 0 };
+    var bloque = [];
+
+    var escribirBloque = function() {
+      if (bloque.length === 0) return true;
+      for (var intento = 0; intento < INDICE_BUSQUEDA.REINTENTOS_LOCK; intento++) {
+        if (indiceEscribirBloqueFilas_(ss, bloque, cuenta, modo === 'revisar')) {
+          nota.filaActual = bloque[bloque.length - 1].fila;
+          if (modo === 'revisar') nota.fila = nota.filaActual + 1;
+          bloque = [];
+          return true;
         }
-      });
-      resumen.carpetasRevisadas++;
-
-      // Contadores a la vista (tarjeta y pestaña) mientras corre la parte.
-      if (Date.now() - ultimoGuardado > INDICE_CONFIG.GUARDAR_CONTADORES_MS) {
-        resumen.carpetasPendientes = trabajo.cola.length;
-        resumen.jsonsEncontrados = trabajo.jsons.length;
-        indiceGuardarResumen_(hoja, resumen);
-        indiceMostrarAvance_(ss, resumen);
-        SpreadsheetApp.flush();
-        ultimoGuardado = Date.now();
+        Utilities.sleep(2000);
       }
-    }
-    if (resumen.etapa === 'recorrer') {
-      resumen.carpetasPendientes = trabajo.cola.length;
-      resumen.jsonsEncontrados = trabajo.jsons.length;
-      if (trabajo.cola.length === 0) resumen.etapa = 'preparar';
-    }
+      return false;
+    };
 
-    // Filas sin copia: qué links originales hay que revisar.
-    if (resumen.etapa === 'preparar' && quedaMs() > INDICE_CONFIG.MARGEN_CONSULTA_MS) {
-      var porRevisar = indiceOriginalesPorRevisar_({
-        raizId: resumen.raizId,
-        carpetas: trabajo.carpetas,
-        jsons: trabajo.jsons
-      }, indiceLeerFilasSheet_(ss));
-      trabajo.originales = {
-        pendientes: porRevisar.ids,
-        cola: [],
-        estados: {},
-        carpetas: {},
-        jsons: [],
-        posJson: {}
-      };
-      resumen.originales = {
-        links: porRevisar.ids.length,
-        revisados: 0,
-        conAcceso: 0,
-        sinAcceso: 0,
-        carpetas: 0,
-        jsons: 0
-      };
-      resumen.etapa = 'originales';
-    }
-
-    while (resumen.etapa === 'originales' && quedaMs() > INDICE_CONFIG.MARGEN_CONSULTA_MS) {
-      if (!indiceAvanzarOriginal_(trabajo.originales, resumen.originales)) break;
-      if (trabajo.originales.pendientes.length === 0 && trabajo.originales.cola.length === 0) {
-        resumen.etapa = 'escribir';
-      }
-      if (Date.now() - ultimoGuardado > INDICE_CONFIG.GUARDAR_CONTADORES_MS) {
-        indiceGuardarResumen_(hoja, resumen);
-        indiceMostrarAvance_(ss, resumen);
-        SpreadsheetApp.flush();
-        ultimoGuardado = Date.now();
-      }
-    }
-
-    if (resumen.etapa === 'escribir' && quedaMs() > margenEscritura) {
-      var filasSheet = indiceLeerFilasSheet_(ss);
-      var datos = {
-        raizId: resumen.raizId,
-        carpetas: trabajo.carpetas,
-        jsons: trabajo.jsons,
-        originales: trabajo.originales
-      };
-      var filas = indiceArmarFilas_(datos, filasSheet);
-      indiceEscribirPestana_(ss, filas);
-      resumen.filasIndice = filas.length;
-      resumen.sinFila = filas.filter(function(f) { return f.cruce === 'sin fila'; }).length;
-
-      var filasSinAcceso = {};
-      if (trabajo.originales) {
-        var sinAcceso = indiceFilasSinAcceso_(datos, filasSheet);
-        indiceEscribirSinAcceso_(ss, sinAcceso);
-        sinAcceso.forEach(function(s) { filasSinAcceso[s.fila] = true; });
-        var filasConOriginal = {};
-        filas.forEach(function(f) {
-          if (f.origen !== 'Original') return;
-          f.numerosFila.forEach(function(n) { filasConOriginal[n] = true; });
-        });
-        resumen.originales.filasConJson = Object.keys(filasConOriginal).length;
-        resumen.originales.filasSinAcceso = Object.keys(filasSinAcceso).length;
-      }
-
-      // Lo que sigue solo necesita las filas a llenar; el árbol ya no.
-      var plan = indicePlanColumnaN_(filas, filasSheet, filasSinAcceso);
-      trabajo = { pendientesN: plan.objetivos };
-      resumen.columnaN = {
-        objetivo: plan.objetivos.length,
-        llenadas: 0,
-        yaTenian: 0,
-        cambiaron: 0,
-        ambiguas: plan.ambiguas,
-        sinAcceso: plan.sinAcceso,
-        sinJson: plan.sinJson
-      };
-      resumen.etapa = 'columnaN';
-    }
-
-    while (resumen.etapa === 'columnaN' && trabajo.pendientesN.length > 0 &&
-           quedaMs() > INDICE_CONFIG.MARGEN_CONSULTA_MS) {
-      var bloque = trabajo.pendientesN.slice(0, INDICE_CONFIG.BLOQUE_N);
-      if (!indiceEscribirBloqueN_(ss, bloque, resumen.columnaN)) {
-        console.warn('[Indice] Sheet ocupado, la columna N sigue en la próxima parte');
+    for (var k = 0; k < lista.length; k++) {
+      if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
+        cortado = true;
         break;
       }
-      trabajo.pendientesN = trabajo.pendientesN.slice(bloque.length);
-    }
-
-    var terminado = resumen.etapa === 'columnaN' && trabajo.pendientesN.length === 0;
-    if (terminado) {
-      resumen.etapa = 'terminado';
-      resumen.terminadoEn = Date.now();
-    }
-
-    indiceAnotarParte_(resumen, inicio, carpetasAntes, jsonsAntes, opciones.origen);
-    resumen.activador = null;
-    resumen.ocupadoHasta = 0;
-    resumen.parteEnCurso = null;
-    indiceGuardarTodo_(hoja, resumen, terminado ? null : trabajo);
-    SpreadsheetApp.flush();
-
-    if (!terminado && opciones.programarSiguiente) {
-      if (resumen.parte < INDICE_CONFIG.MAX_PARTES) {
-        indiceProgramarParte_(ss, hoja, resumen);
-      } else {
-        resumen.ultimoError = 'Se llegó al tope de ' + INDICE_CONFIG.MAX_PARTES + ' partes.';
-        indiceGuardarResumen_(hoja, resumen);
+      var item = lista[k];
+      var resultado = null;
+      if (item.necesitaN) {
+        resultado = indiceResultadoFila_(item, arbol, directorio, originales);
+        if (resultado.pendiente) {
+          if (!indiceRevisarOriginalesDeFila_(item, arbol, originales, cuentaO, quedaMs)) {
+            cortado = true;
+            break;
+          }
+          resultado = indiceResultadoFila_(item, arbol, directorio, originales);
+        }
+      }
+      bloque.push({
+        fila: item.fila,
+        caso: item.caso,
+        servicio: item.servicio,
+        resultado: resultado,
+        carpeta: item.carpeta,
+        soloCarpeta: item.soloCarpeta
+      });
+      if (bloque.length >= INDICE_CONFIG.BLOQUE_N && !escribirBloque()) {
+        cortado = true;
+        break;
       }
     }
-    indiceMostrarAvance_(ss, resumen);
-  } catch (err) {
-    console.error('[Indice] Error en la parte ' + resumen.parte + ': ' + err.message);
-    resumen.ultimoError = String(err.message || err).substring(0, 300);
-    indiceAnotarParte_(resumen, inicio, carpetasAntes, jsonsAntes, opciones.origen);
-    resumen.activador = null;
-    resumen.ocupadoHasta = 0;
-    resumen.parteEnCurso = null;
-    indiceGuardarTodo_(hoja, resumen, trabajo);
-    indiceMostrarAvance_(ss, resumen);
-    return { error: resumen.ultimoError, resumen: resumen };
-  }
+    if (!escribirBloque()) cortado = true;
 
-  console.log('[Indice] Parte ' + resumen.parte + ' (' + (opciones.origen || 'botón') + '): ' +
-    resumen.carpetasRevisadas + ' carpetas, ' + resumen.jsonsEncontrados + ' JSON, etapa ' +
-    resumen.etapa + (resumen.activador ? ', siguiente: ' + resumen.activador.estado : ''));
-  return { resumen: resumen };
-}
-
-function indiceAnotarParte_(resumen, inicio, carpetasAntes, jsonsAntes, origen) {
-  var historial = resumen.historial || [];
-  historial.unshift({
-    n: resumen.parte,
-    origen: origen || 'botón',
-    inicio: inicio,
-    ms: Date.now() - inicio,
-    carpetas: resumen.carpetasRevisadas - carpetasAntes,
-    jsons: (resumen.jsonsEncontrados || 0) - jsonsAntes
-  });
-  resumen.historial = historial.slice(0, INDICE_CONFIG.MAX_HISTORIAL);
-}
-
-/**
- * Mientras se recorren las carpetas, la pestaña del índice muestra el
- * avance. Sheets la refresca sola, sin recargar. Si la pestaña ya tiene
- * datos de un índice anterior, el avance va en una columna a la derecha
- * para no taparlos; si está vacía, va arriba. Al escribir el índice nuevo
- * se borra junto con lo demás.
- */
-var INDICE_ETAPAS_CON_AVANCE = ['recorrer', 'preparar', 'originales', 'escribir'];
-
-/**
- * Una línea con lo que lleva hecho la etapa actual, para la pestaña y la
- * tarjeta.
- */
-function indiceTextoEtapa_(r) {
-  var copias = r.carpetasRevisadas + ' carpetas propias revisadas · ' + (r.jsonsEncontrados || 0) + ' JSON';
-  var o = r.originales;
-  switch (r.etapa) {
-    case 'recorrer':
-      return copias + ' · faltan ' + (r.carpetasPendientes || 0) + ' carpetas (más las que aparezcan dentro)';
-    case 'preparar':
-      return copias + '. Buscando las filas sin copia para revisar sus originales.';
-    case 'originales':
-      return copias + '. Originales: ' + o.revisados + ' de ' + o.links + ' links revisados (' +
-        o.conAcceso + ' con acceso, ' + o.sinAcceso + ' sin acceso) · ' + o.carpetas +
-        ' carpetas recorridas · ' + o.jsons + ' JSON';
-    case 'escribir':
-      return copias + (o ? ' · ' + o.jsons + ' JSON en originales' : '') + '. Falta escribir el índice.';
-    case 'columnaN':
-      return 'Pestaña lista. Llenando la columna N: ' + indiceFilasRevisadasN_(r.columnaN) + ' de ' +
-        r.columnaN.objetivo + ' filas revisadas.';
-    default:
-      return '';
-  }
-}
-
-function indiceMostrarAvance_(ss, resumen) {
-  if (!resumen || INDICE_ETAPAS_CON_AVANCE.indexOf(resumen.etapa) === -1) return;
-  try {
-    var pestana = ss.getSheetByName(INDICE_CONFIG.PESTANA) || ss.insertSheet(INDICE_CONFIG.PESTANA);
-    var ahora = Date.now();
-    var estado;
-    if (resumen.ultimoError) {
-      estado = '⚠️ Se detuvo por un error: ' + resumen.ultimoError;
-    } else if (resumen.ocupadoHasta > ahora && resumen.parteEnCurso) {
-      estado = '⏳ Trabajando: parte ' + resumen.parteEnCurso.n + ' (' + resumen.parteEnCurso.origen +
-        '), empezó a las ' + formatearHoraIndice_(resumen.parteEnCurso.inicio);
-    } else if (resumen.activador && resumen.activador.estado === 'programado') {
-      estado = '⏱️ Parte ' + (resumen.parte + 1) + ' programada a las ' +
-        formatearHoraIndice_(resumen.activador.en) + '; arranca sola en unos segundos.';
-    } else if (resumen.activador) {
-      estado = '⚠️ No se pudo programar la parte siguiente: ' +
-        (resumen.activador.detalle || resumen.activador.estado) + '. Continúa desde el panel.';
-    } else {
-      estado = '⏸️ En pausa. Continúa desde el panel del add-on.';
+    cuenta.originalesRevisados = (cuenta.originalesRevisados || 0) + cuentaO.revisados;
+    if (!cortado) {
+      indiceFormatoColumnas_(hoja);
+      var sinFila = indiceJsonSinFila_(arbol, directorio, filas);
+      indiceEscribirSinFila_(ss, sinFila);
+      cuenta.sinFila = sinFila.length;
+      nota.etapa = 'terminado';
+      nota.terminadoEn = Date.now();
+      nota.fila = 0;
     }
-    var avance = indiceTextoEtapa_(resumen);
-    var conDatos = String(pestana.getRange(1, 1).getValue()) === INDICE_ENCABEZADOS[0];
-    var columna = conDatos ? INDICE_ENCABEZADOS.length + 2 : 1;
-    pestana.getRange(1, columna, 4, 1).setValues([
-      [conDatos
-        ? 'Actualizando el índice. Los datos de la izquierda son del índice anterior y se reemplazan al terminar.'
-        : 'Índice de JSON: creando. Los datos aparecen aquí al terminar.'],
-      [estado],
-      [avance],
-      ['Última actualización: ' + formatearHoraIndice_(ahora)]
-    ]);
-    pestana.getRange(1, columna).setFontWeight('bold');
   } catch (err) {
-    console.warn('[Indice] No se pudo mostrar el avance en la pestaña: ' + err.message);
+    console.error('[Indice] Error en la búsqueda: ' + err.message);
+    nota.ultimoError = String(err.message || err).substring(0, 300);
+    cortado = true;
+  } finally {
+    nota.ocupadoHasta = 0;
+    nota.cuenta = cuenta;
+    indiceGuardarNota_(sheetId, nota);
+  }
+
+  console.log('[Indice] Búsqueda (' + modo + '), parte ' + nota.partes + ': hasta la fila ' +
+    nota.filaActual + ' de ' + nota.ultimaFila + (cortado ? ', sigue en otra parte' : ', terminada'));
+  return { terminado: !cortado && !nota.ultimoError, nota: nota, cuenta: cuenta };
+}
+
+// ── Activadores de la búsqueda ────────────────────────────────────────
+//
+// Mismo esquema que Reintentos.gs: el botón solo prepara y programa; cada
+// parte corre en su activador y, al terminar, borra su propio activador y
+// enseguida programa el siguiente si falta (sin crear otro si ya hay uno
+// esperando). Si Google lo rechaza por el límite de una vez por hora, se
+// programa a la hora y la tarjeta ofrece seguir desde el panel.
+
+/**
+ * Deja la nota lista para una búsqueda en el modo pedido. Si ya había una
+ * a medias en el mismo modo, la retoma (el avance está en la columna N).
+ * Devuelve { ocupado, nota } o { nota }.
+ */
+function indicePrepararBusqueda_(sheetId, modo) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ocupado: true, nota: indiceLeerNota_(sheetId) };
+  try {
+    var nota = indiceLeerNota_(sheetId);
+    if (nota && nota.ocupadoHasta > Date.now()) return { ocupado: true, nota: nota };
+    var retomar = nota && nota.modo === modo && (nota.etapa === 'buscando' || nota.etapa === 'detenido');
+    if (retomar) {
+      // Detenida (tope de partes o sin avance): el tope vuelve a contar.
+      if (nota.etapa === 'detenido') nota.partes = 0;
+      nota.etapa = 'buscando';
+      nota.ultimoError = '';
+    } else {
+      nota = {
+        modo: modo,
+        etapa: 'buscando',
+        iniciadoEn: Date.now(),
+        partes: 0,
+        fila: 0,
+        filaActual: 0,
+        ultimaFila: 0,
+        cuenta: {}
+      };
+    }
+    nota.activador = null;
+    indiceGuardarNota_(sheetId, nota);
+    return { nota: nota };
+  } finally {
+    lock.releaseLock();
   }
 }
 
 /**
- * Activadores de tiempo del usuario en este proyecto, por tipo. Sirve para
- * ver en el panel si el del índice existe y cuánto cupo queda.
+ * Cambia campos de la nota con el lock tomado, sin pisar lo que otra
+ * ejecución haya guardado en otros campos.
  */
-function indiceContarActivadores_() {
-  var res = { indice: 0, reintentos: 0, total: 0 };
+function indiceActualizarNota_(sheetId, cambios) {
+  var lock = LockService.getScriptLock();
+  var conLock = lock.tryLock(10000);
+  try {
+    var nota = indiceLeerNota_(sheetId) || {};
+    Object.keys(cambios).forEach(function(k) { nota[k] = cambios[k]; });
+    indiceGuardarNota_(sheetId, nota);
+    return nota;
+  } finally {
+    if (conLock) lock.releaseLock();
+  }
+}
+
+function indiceHayActivadorBusqueda_() {
+  try {
+    return ScriptApp.getProjectTriggers().some(function(t) {
+      return t.getHandlerFunction() === INDICE_BUSQUEDA.HANDLER;
+    });
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Programa la parte siguiente. desde: 'panel' o 'activador' (se anota para
+ * saber de qué contexto acepta Google programar). Respeta el cupo de
+ * activadores que comparte con reintentos (solo los cuenta).
+ * Devuelve el estado anotado en la nota.
+ */
+function indiceProgramarBusqueda_(sheetId, desde) {
+  var activador;
+  // Desde el panel (acción del usuario) se reemplaza el que haya, por
+  // ejemplo uno programado a la hora; desde un activador no se crea otro.
+  if (desde === 'panel') {
+    try {
+      ScriptApp.getProjectTriggers().forEach(function(t) {
+        if (t.getHandlerFunction() === INDICE_BUSQUEDA.HANDLER) ScriptApp.deleteTrigger(t);
+      });
+    } catch (err) {
+      console.log('[Indice] No se pudo borrar el activador anterior: ' + err.message);
+    }
+  }
+  if (indiceHayActivadorBusqueda_()) {
+    activador = { estado: 'ya_hay_uno', desde: desde, en: Date.now() };
+  } else if (contarTriggersActivos() >= REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS) {
+    activador = {
+      estado: 'sin_cupo',
+      desde: desde,
+      en: Date.now(),
+      detalle: 'ya hay ' + contarTriggersActivos() + ' activadores de tiempo en uso'
+    };
+  } else {
+    try {
+      ScriptApp.newTrigger(INDICE_BUSQUEDA.HANDLER).timeBased()
+        .after(REINTENTOS_CONFIG.DELAY_TRIGGER_MS).create();
+      activador = { estado: 'programado', desde: desde, en: Date.now() };
+    } catch (err) {
+      var detalle = String(err.message || err).substring(0, 200);
+      console.warn('[Indice] Google rechazó programar la parte siguiente (' + desde + '): ' + detalle);
+      if (/hour/i.test(detalle)) {
+        try {
+          ScriptApp.newTrigger(INDICE_BUSQUEDA.HANDLER).timeBased()
+            .after(INDICE_BUSQUEDA.ESPERA_HORA_MS).create();
+          activador = {
+            estado: 'a_la_hora',
+            desde: desde,
+            en: Date.now() + INDICE_BUSQUEDA.ESPERA_HORA_MS,
+            detalle: detalle
+          };
+        } catch (err2) {
+          activador = { estado: 'error', desde: desde, en: Date.now(), detalle: String(err2.message || err2).substring(0, 200) };
+        }
+      } else {
+        activador = { estado: 'error', desde: desde, en: Date.now(), detalle: detalle };
+      }
+    }
+  }
+  console.log('[Indice] Parte siguiente (' + desde + '): ' + activador.estado);
+  indiceActualizarNota_(sheetId, { activador: activador });
+  return activador;
+}
+
+/**
+ * Qué hacer al final de una parte (solo calcula):
+ *   'nada'      terminó, u otra parte tiene el turno y programará ella
+ *   'programar' quedan filas y la parte avanzó
+ *   'parar'     se llegó al tope de partes, o la parte no avanzó
+ */
+function indiceDecidirSiguiente_(res, filaAntes, maxPartes) {
+  if (!res || res.ocupado || res.terminado || res.sinBusqueda) return { accion: 'nada' };
+  var nota = res.nota || {};
+  if (nota.partes >= maxPartes) {
+    return { accion: 'parar', motivo: 'Se llegó al tope de ' + maxPartes + ' partes.' };
+  }
+  if (nota.filaActual === filaAntes) {
+    return {
+      accion: 'parar',
+      motivo: nota.ultimoError
+        ? 'La búsqueda se detuvo por un error: ' + nota.ultimoError
+        : 'La búsqueda no avanzó en la última parte.'
+    };
+  }
+  return { accion: 'programar' };
+}
+
+function indiceBorrarActivadorActual_(e) {
+  var uid = e && e.triggerUid;
+  if (!uid) return;
+  try {
+    ScriptApp.getProjectTriggers().forEach(function(t) {
+      if (t.getUniqueId() === uid) ScriptApp.deleteTrigger(t);
+    });
+  } catch (err) {
+    console.log('[Indice] No se pudo borrar el activador propio: ' + err.message);
+  }
+}
+
+/**
+ * Handler del activador de la búsqueda: hace una parte y, como en los
+ * reintentos, al final borra su propio activador y programa el siguiente.
+ */
+function continuarBusquedaJson(e) {
+  console.log('[Indice] Activador disparado');
+  var sheetId = PropertiesService.getUserProperties().getProperty('INDICE_SHEET_ID') || obtenerSheetId();
+  var nota = sheetId ? indiceLeerNota_(sheetId) : null;
+  if (!nota || nota.etapa !== 'buscando') {
+    console.log('[Indice] No hay una búsqueda en curso; nada que hacer');
+    indiceBorrarActivadorActual_(e);
+    return;
+  }
+
+  var filaAntes = nota.filaActual;
+  var res;
+  try {
+    res = indiceCorrerBusqueda_(sheetId, INDICE_BUSQUEDA.PRESUPUESTO_MS, nota.modo);
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    res = { nota: indiceActualizarNota_(sheetId, { ultimoError: String(err.message || err).substring(0, 300) }) };
+  }
+  if (res.ocupado) console.log('[Indice] Otra parte tiene el turno; esta termina sin hacer nada');
+
+  indiceBorrarActivadorActual_(e);
+  var decision = indiceDecidirSiguiente_(res, filaAntes, INDICE_BUSQUEDA.MAX_PARTES);
+  if (decision.accion === 'programar') {
+    indiceProgramarBusqueda_(sheetId, 'activador');
+  } else if (decision.accion === 'parar') {
+    console.warn('[Indice] ' + decision.motivo);
+    indiceActualizarNota_(sheetId, { etapa: 'detenido', ultimoError: decision.motivo, activador: null });
+  } else if (res.terminado) {
+    indiceActualizarNota_(sheetId, { activador: null });
+  }
+}
+
+// ── Tarjeta de la búsqueda ────────────────────────────────────────────
+
+var INDICE_NOMBRE_MODO = { normal: 'Buscar JSON', revisar: 'Revisar avisos' };
+
+var INDICE_TEXTO_ESTADO_ACTIVADOR = {
+  programado: 'programada',
+  a_la_hora: 'programada a la hora (Google no dejó antes)',
+  ya_hay_uno: 'ya había una esperando',
+  sin_cupo: 'sin cupo de activadores',
+  error: 'no se pudo programar'
+};
+
+/**
+ * Resumen de los contadores de una búsqueda, una línea por dato que tenga
+ * algo.
+ */
+function indiceTextoCuenta_(cuenta) {
+  var c = cuenta || {};
+  var lineas = [];
+  function agregar(valor, texto) {
+    if (valor) lineas.push(valor + ' ' + texto);
+  }
+  agregar(c.links, 'fila(s) con JSON');
+  agregar(c.motivo, 'fila(s) con el motivo de por qué no hay JSON');
+  agregar(c.limpiada, 'celda(s) limpiadas (tenían un motivo viejo y links)');
+  agregar(c.carpetas, 'fila(s) con su carpeta en la columna O');
+  agregar(c.cambiaron, 'fila(s) saltadas porque cambiaron mientras corría');
+  agregar(c.sinFila, 'JSON sin fila (ver la pestaña "' + INDICE_PESTANA_SIN_FILA + '")');
+  agregar(c.erroresDrive, 'carpeta(s) de Drive que no se pudieron leer');
+  return lineas.join('<br>');
+}
+
+/**
+ * Una línea de estado para el menú del panel.
+ */
+function textoCortoBusquedaJson_() {
+  var sheetId = obtenerSheetId();
+  var nota = sheetId ? indiceLeerNota_(sheetId) : null;
+  if (!nota) return 'Todavía no se ha buscado.';
+  var c = nota.cuenta || {};
+  if (nota.etapa === 'terminado') {
+    return '✅ Última búsqueda: ' + formatearFechaIndice_(nota.terminadoEn) + ' · ' +
+      (c.links || 0) + ' con JSON · ' + (c.motivo || 0) + ' con motivo';
+  }
+  if (nota.etapa === 'detenido') return '⚠️ La búsqueda se detuvo. Entra para continuar.';
+  return '⏳ Buscando: va en la fila ' + (nota.filaActual || 0) + ' de ' + (nota.ultimaFila || '?');
+}
+
+/**
+ * Tarjeta "JSON de las solicitudes": estado de la búsqueda (sale de la nota
+ * compartida, así que todos ven lo mismo), resumen y botones.
+ */
+function buildBusquedaJsonCard_() {
+  var sheetId = obtenerSheetId();
+  var nota = sheetId ? indiceLeerNota_(sheetId) : null;
+  var ahora = Date.now();
+  var card = CardService.newCardBuilder()
+    .setHeader(
+      CardService.newCardHeader()
+        .setTitle('JSON de las solicitudes')
+        .setSubtitle('Columnas N (JSON) y O (carpeta copiada)')
+    );
+
+  var estado = CardService.newCardSection();
+  var botones = CardService.newButtonSet();
+  function boton(texto, funcion, principal) {
+    var b = CardService.newTextButton()
+      .setText(texto)
+      .setOnClickAction(CardService.newAction().setFunctionName(funcion));
+    if (principal) b.setTextButtonStyle(CardService.TextButtonStyle.FILLED).setBackgroundColor('#1a73e8');
+    botones.addButton(b);
+  }
+  function parrafo(html) {
+    estado.addWidget(CardService.newTextParagraph().setText(html));
+  }
+  function rojo(html) {
+    return '<font color="#d93025">' + html + '</font>';
+  }
+
+  var corriendo = !!(nota && nota.ocupadoHasta > ahora);
+  var avance = nota && nota.partes > 0
+    ? 'Va en la fila <b>' + (nota.filaActual || 0) + '</b> de ' + (nota.ultimaFila || '?') +
+      ' · parte ' + nota.partes + ' · ' + INDICE_NOMBRE_MODO[nota.modo]
+    : (nota ? INDICE_NOMBRE_MODO[nota.modo] : '');
+
+  if (!nota) {
+    parrafo('Busca los JSON de cada fila y los escribe en la columna <b>N</b>. Si no hay, escribe el motivo. ' +
+      'En la columna <b>O</b> pone el link a nuestra carpeta copiada cuando la columna C no lo tiene.<br>' +
+      '<i>Trabaja solo en segundo plano; el avance se ve en la columna N.</i>');
+    boton('Buscar JSON', 'onBuscarJson', true);
+    boton('Revisar avisos', 'onRevisarAvisosJson', false);
+  } else if (corriendo) {
+    parrafo('⏳ <b>Buscando</b>: la parte ' + nota.partes + ' empezó a las ' +
+      formatearHoraIndice_(nota.parteIniciadaEn) + ' (hace ' + formatearDuracionIndice_(ahora - nota.parteIniciadaEn) + ').<br>' + avance);
+    boton('Ver avance', 'onVerAvanceBusquedaJson', false);
+  } else if (nota.etapa === 'buscando') {
+    var act = nota.activador;
+    var texto;
+    var ofrecerContinuar = true;
+    if (!act) {
+      texto = '⏸️ <b>En pausa.</b> Presiona "Continuar" para seguir.';
+    } else if (act.estado === 'a_la_hora') {
+      texto = '⏱️ <b>La parte ' + (nota.partes + 1) + ' quedó para las ' + formatearHoraIndice_(act.en) +
+        '</b> (Google no dejó programarla antes). Para seguir ya, presiona "Continuar".';
+    } else if (act.estado === 'programado' || act.estado === 'ya_hay_uno') {
+      if (ahora - act.en < INDICE_CONFIG.ESPERA_ACTIVADOR_MS) {
+        texto = '⏱️ <b>La parte ' + (nota.partes + 1) + ' arranca sola en unos segundos.</b>';
+        ofrecerContinuar = false;
+      } else {
+        texto = rojo('⚠️ <b>La parte ' + (nota.partes + 1) + ' se programó a las ' + formatearHoraIndice_(act.en) +
+          ' y no ha arrancado.</b> Presiona "Continuar".');
+      }
+    } else {
+      texto = rojo('⚠️ <b>No se pudo programar la parte siguiente</b>: ' + escaparHtml(act.detalle || act.estado));
+    }
+    parrafo(texto + '<br>' + avance);
+    if (ofrecerContinuar) boton('Continuar', 'onContinuarBusquedaJson', true);
+    boton('Ver avance', 'onVerAvanceBusquedaJson', false);
+  } else if (nota.etapa === 'detenido') {
+    parrafo(rojo('⚠️ <b>La búsqueda se detuvo.</b> ' + escaparHtml(nota.ultimoError || '')) + '<br>' + avance);
+    boton('Continuar', 'onContinuarBusquedaJson', true);
+    boton('Ver avance', 'onVerAvanceBusquedaJson', false);
+  } else {
+    parrafo('✅ <b>' + INDICE_NOMBRE_MODO[nota.modo] + ' terminó el ' + formatearFechaIndice_(nota.terminadoEn) +
+      '</b>, en ' + nota.partes + ' parte' + (nota.partes === 1 ? '' : 's') + '.');
+    boton('Buscar JSON', 'onBuscarJson', true);
+    boton('Revisar avisos', 'onRevisarAvisosJson', false);
+    var url = indiceUrlPestanaSinFila_(sheetId);
+    if (url) {
+      botones.addButton(CardService.newTextButton().setText('Abrir "JSON sin fila"')
+        .setOpenLink(CardService.newOpenLink().setUrl(url)));
+    }
+  }
+
+  var resumen = nota ? indiceTextoCuenta_(nota.cuenta) : '';
+  if (resumen) parrafo(resumen);
+  if (nota && nota.ultimoError && nota.etapa !== 'detenido') {
+    parrafo(rojo('Último error: ' + escaparHtml(nota.ultimoError)));
+  }
+  if (nota && !corriendo && nota.etapa !== 'terminado') {
+    parrafo('<i>Esta tarjeta no se refresca sola: usa "Ver avance". El avance también se ve en la columna N.</i>');
+  }
+  estado.addWidget(botones);
+  card.addSection(estado);
+
+  var activos = 0;
+  var deBusqueda = 0;
   try {
     ScriptApp.getProjectTriggers().forEach(function(t) {
       if (t.getEventType() !== ScriptApp.EventType.CLOCK) return;
-      res.total++;
-      if (t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR) res.indice++;
-      if (t.getHandlerFunction() === 'reintentarCopiaPendiente') res.reintentos++;
+      activos++;
+      if (t.getHandlerFunction() === INDICE_BUSQUEDA.HANDLER) deBusqueda++;
     });
   } catch (err) {
-    res.error = err.message;
+    activos = -1;
   }
-  return res;
+  card.addSection(
+    CardService.newCardSection()
+      .setHeader('Activadores')
+      .setCollapsible(true)
+      .addWidget(CardService.newTextParagraph().setText(activos < 0
+        ? 'No se pudieron leer.'
+        : 'De la búsqueda: ' + deBusqueda + ' · de tiempo en total: ' + activos + ' (tope ' +
+          REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS + ')' +
+          (nota && nota.activador
+            ? '<br>Última parte siguiente: ' + (INDICE_TEXTO_ESTADO_ACTIVADOR[nota.activador.estado] || nota.activador.estado) +
+              ', pedida desde ' + (nota.activador.desde === 'panel' ? 'el panel' : 'el activador')
+            : '')))
+  );
+  return card.build();
 }
 
-/**
- * Programa la parte siguiente. El estado se guarda antes de crear el
- * activador, para que la parte nueva no lea un resumen viejo; si la
- * creación falla, se anota el error exacto (los activadores de un add-on
- * no avisan por correo cuando fallan).
- */
-function indiceProgramarParte_(ss, hoja, resumen) {
-  var activos = contarTriggersActivos();
-  if (activos >= REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS) {
-    resumen.activador = {
-      estado: 'sin_cupo',
-      en: Date.now(),
-      detalle: 'ya hay ' + activos + ' activadores de tiempo en uso (tope ' +
-        REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS + ')'
-    };
-    indiceGuardarResumen_(hoja, resumen);
-    return resumen.activador;
-  }
-
-  resumen.activador = { estado: 'programado', en: Date.now() };
-  indiceGuardarResumen_(hoja, resumen);
-  SpreadsheetApp.flush();
+function indiceUrlPestanaSinFila_(sheetId) {
   try {
-    ScriptApp.getProjectTriggers().forEach(function(t) {
-      if (t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR) ScriptApp.deleteTrigger(t);
-    });
-    ScriptApp.newTrigger(INDICE_CONFIG.HANDLER_ACTIVADOR)
-      .timeBased()
-      .after(REINTENTOS_CONFIG.DELAY_TRIGGER_MS)
-      .create();
-    console.log('[Indice] Parte ' + (resumen.parte + 1) + ' programada');
+    var ss = SpreadsheetApp.openById(sheetId);
+    var hoja = ss.getSheetByName(INDICE_PESTANA_SIN_FILA);
+    return hoja ? ss.getUrl() + '#gid=' + hoja.getSheetId() : '';
   } catch (err) {
-    console.error('[Indice] No se pudo crear el activador: ' + err.message);
-    resumen.activador = {
-      estado: 'error',
-      en: Date.now(),
-      detalle: String(err.message || err).substring(0, 200)
-    };
-    indiceGuardarResumen_(hoja, resumen);
+    return '';
   }
-  return resumen.activador;
+}
+
+function indiceRespuestaBusqueda_(aviso) {
+  var r = CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(buildBusquedaJsonCard_()));
+  if (aviso) r.setNotification(CardService.newNotification().setText(aviso));
+  return r.build();
+}
+
+function indiceTextoActivador_(act) {
+  if (act.estado === 'programado' || act.estado === 'ya_hay_uno') return 'Arranca sola en unos segundos.';
+  if (act.estado === 'a_la_hora') {
+    return 'Google no dejó programarla antes: quedó para las ' + formatearHoraIndice_(act.en) + '.';
+  }
+  return 'No se pudo programar: ' + (act.detalle || act.estado);
 }
 
 /**
- * Handler del activador. Como en los reintentos, borra su propio activador
- * (aquí al empezar, para que una parte que se corta por tiempo no deje uno
- * viejo listado), hace una parte larga y programa la siguiente si falta.
+ * "Buscar JSON" y "Revisar avisos": preparan la nota y programan la primera
+ * parte. No buscan nada aquí (una acción de tarjeta tiene 30 s).
  */
-function continuarIndiceJson(e) {
-  console.log('[Indice] Activador disparado');
-  ScriptApp.getProjectTriggers().forEach(function(t) {
-    var propio = e && e.triggerUid
-      ? t.getUniqueId() === e.triggerUid
-      : t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR;
-    if (propio) {
-      try { ScriptApp.deleteTrigger(t); } catch (err) { /* ya no existe */ }
-    }
-  });
+function indiceIniciarDesdePanel_(modo) {
+  var motivo = motivoConfigInvalida();
+  if (motivo) return motivo;
+  var sheetId = obtenerSheetId();
+  PropertiesService.getUserProperties().setProperty('INDICE_SHEET_ID', sheetId);
 
-  var sheetId = PropertiesService.getUserProperties().getProperty('INDICE_SHEET_ID') || obtenerSheetId();
-  if (!sheetId) {
-    console.warn('[Indice] Sin Sheet configurado, no se sigue');
-    return;
+  var nota = indiceLeerNota_(sheetId);
+  if (nota && nota.ocupadoHasta > Date.now()) {
+    return 'Ya hay una búsqueda corriendo: va en la fila ' + (nota.filaActual || 0) + '.';
   }
-
-  var res = avanzarIndiceJson_(sheetId, INDICE_CONFIG.PRESUPUESTO_ACTIVADOR_MS, {
-    origen: 'automática',
-    programarSiguiente: true
-  });
-  if (res.ocupado) console.log('[Indice] Otra parte está corriendo; esta termina sin hacer nada');
-  if (res.sinTrabajo) console.log('[Indice] No hay un índice a medias; nada que hacer');
+  if (nota && nota.modo !== modo && (nota.etapa === 'buscando' || nota.etapa === 'detenido')) {
+    return 'Hay un "' + INDICE_NOMBRE_MODO[nota.modo] + '" a medias. Termínalo primero con "Continuar".';
+  }
+  var prep = indicePrepararBusqueda_(sheetId, modo);
+  if (prep.ocupado) return 'Ya hay una búsqueda corriendo.';
+  return INDICE_NOMBRE_MODO[modo] + ': ' + indiceTextoActivador_(indiceProgramarBusqueda_(sheetId, 'panel'));
 }
 
-// ── Panel ─────────────────────────────────────────────────────────────
+function onAbrirBusquedaJson(e) {
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(buildBusquedaJsonCard_()))
+    .build();
+}
+
+function onVerAvanceBusquedaJson(e) {
+  return indiceRespuestaBusqueda_(null);
+}
+
+function onBuscarJson(e) {
+  var aviso;
+  try {
+    aviso = indiceIniciarDesdePanel_('normal');
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo iniciar la búsqueda: ' + err.message;
+  }
+  return indiceRespuestaBusqueda_(aviso);
+}
+
+function onRevisarAvisosJson(e) {
+  var aviso;
+  try {
+    aviso = indiceIniciarDesdePanel_('revisar');
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo iniciar la revisión: ' + err.message;
+  }
+  return indiceRespuestaBusqueda_(aviso);
+}
+
+/**
+ * "Continuar": programa ya la parte siguiente (si quedó a la hora, se
+ * detuvo o no arrancó).
+ */
+function onContinuarBusquedaJson(e) {
+  var aviso;
+  try {
+    var sheetId = obtenerSheetId();
+    PropertiesService.getUserProperties().setProperty('INDICE_SHEET_ID', sheetId);
+    var nota = indiceLeerNota_(sheetId);
+    if (!nota || nota.etapa === 'terminado') {
+      aviso = 'No hay una búsqueda a medias.';
+    } else if (nota.ocupadoHasta > Date.now()) {
+      aviso = 'Ya hay una parte corriendo.';
+    } else {
+      var prep = indicePrepararBusqueda_(sheetId, nota.modo);
+      aviso = prep.ocupado
+        ? 'Ya hay una parte corriendo.'
+        : 'Parte siguiente: ' + indiceTextoActivador_(indiceProgramarBusqueda_(sheetId, 'panel'));
+    }
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo continuar: ' + err.message;
+  }
+  return indiceRespuestaBusqueda_(aviso);
+}
+
+// ── Fechas y horas para la tarjeta ────────────────────────────────────
 
 function formatearFechaIndice_(ms) {
   return Utilities.formatDate(new Date(ms), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
@@ -1334,356 +1607,51 @@ function formatearDuracionIndice_(ms) {
   return Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
 }
 
-function indiceFilasRevisadasN_(c) {
-  return c ? c.llenadas + c.yaTenian + c.cambiaron : 0;
-}
+// ── Compatibilidad con la versión anterior ────────────────────────────
+//
+// Botones de tarjetas que quedaron abiertas con la versión anterior del
+// índice: llevan a la tarjeta nueva. El activador anterior, si llega a
+// dispararse, se borra solo y no hace nada.
 
-/**
- * Una línea de estado para el menú del panel.
- */
-function textoCortoIndiceJson_() {
-  var r = leerEstadoIndiceJson_();
-  if (!r) return 'Todavía no se ha creado.';
-  if (r.etapa === 'terminado') {
-    return '✅ ' + r.filasIndice + ' JSON · actualizado el ' + formatearFechaIndice_(r.terminadoEn) +
-      (r.columnaN ? '<br>' + r.columnaN.llenadas + ' fila(s) llenadas en la columna N' : '');
-  }
-  if (r.ocupadoHasta > Date.now()) {
-    return '⏳ Actualizando: parte ' + r.parte + ', ' + r.carpetasRevisadas + ' carpetas revisadas';
-  }
-  if (r.activador && r.activador.estado === 'programado' && !r.activador.corrioEn) {
-    return '⏱️ Parte ' + (r.parte + 1) + ' programada, ' + r.carpetasRevisadas + ' carpetas revisadas';
-  }
-  return '⏸️ A medias: ' + r.carpetasRevisadas + ' carpetas revisadas. Entra para continuar.';
-}
-
-/**
- * ¿La parte siguiente debería estar corriendo y no lo está? En ese caso
- * se ofrece avanzar desde el panel.
- */
-function indiceActivadorConProblema_(r, ahora) {
-  if (!r.activador) return true;
-  if (r.activador.estado !== 'programado') return true;
-  if (r.activador.corrioEn) return true;
-  return ahora - r.activador.en > INDICE_CONFIG.ESPERA_ACTIVADOR_MS;
-}
-
-/**
- * Tarjeta del índice: estado, qué está corriendo ahora, si la parte
- * siguiente arranca sola, el historial de partes y los activadores.
- */
-function buildIndiceJsonCard_() {
-  var r = leerEstadoIndiceJson_();
-  var ahora = Date.now();
-  var card = CardService.newCardBuilder()
-    .setHeader(
-      CardService.newCardHeader()
-        .setTitle('Índice de JSON')
-        .setSubtitle('Pestaña "' + INDICE_CONFIG.PESTANA + '" del Sheet configurado')
-    );
-
-  var estado = CardService.newCardSection();
-  var ocupado = !!(r && r.ocupadoHasta > ahora);
-  var botones = CardService.newButtonSet();
-
-  function boton(texto, funcion, principal) {
-    var b = CardService.newTextButton()
-      .setText(texto)
-      .setOnClickAction(CardService.newAction().setFunctionName(funcion));
-    if (principal) {
-      b.setTextButtonStyle(CardService.TextButtonStyle.FILLED).setBackgroundColor('#1a73e8');
-    }
-    botones.addButton(b);
-  }
-
-  if (!r) {
-    estado.addWidget(CardService.newTextParagraph().setText(
-      'Todavía no hay índice. Al presionar el botón se crea la pestaña "' + INDICE_CONFIG.PESTANA +
-      '" y el trabajo sigue solo en segundo plano: recorre la carpeta raíz, escribe una fila por cada .json ' +
-      '(servicio, caso, ambiente, componente, estado y link) y llena la columna N de las filas que la tengan vacía.<br>' +
-      '<i>El avance se ve en la misma pestaña mientras corre.</i>'
-    ));
-    boton('🗂️ Crear índice', 'onIniciarIndiceJson', true);
-  } else if (r.etapa === 'terminado') {
-    estado.addWidget(CardService.newTextParagraph().setText(
-      '✅ <b>Actualizado el ' + formatearFechaIndice_(r.terminadoEn) + '</b><br>' +
-      r.filasIndice + ' JSON en ' + r.carpetasRevisadas + ' carpetas, en ' + r.parte +
-      ' parte' + (r.parte === 1 ? '' : 's') +
-      (r.sinFila ? '<br>' + r.sinFila + ' JSON sin fila en el Sheet' : '') +
-      (r.errores ? '<br>' + r.errores + ' carpeta(s) no se pudieron leer' : '')
-    ));
-    if (r.originales) {
-      var o = r.originales;
-      estado.addWidget(CardService.newTextParagraph().setText(
-        '<b>Originales (filas sin copia)</b><br>' +
-        o.links + ' links revisados: ' + o.conAcceso + ' con acceso, ' + o.sinAcceso + ' sin acceso o borrados<br>' +
-        o.jsons + ' JSON en originales, para ' + (o.filasConJson || 0) + ' fila(s)' +
-        (o.filasSinAcceso
-          ? '<br>🔒 ' + o.filasSinAcceso + ' fila(s) con originales sin acceso: ver la pestaña "' +
-            INDICE_CONFIG.PESTANA_SIN_ACCESO + '"'
-          : '')
-      ));
-    }
-    if (r.columnaN) {
-      var c = r.columnaN;
-      estado.addWidget(CardService.newTextParagraph().setText(
-        '<b>Columna N (Archivos JSON)</b><br>' +
-        '✏️ ' + c.llenadas + ' fila(s) llenadas ahora<br>' +
-        '✔️ ' + c.yaTenian + ' ya tenían JSON (no se tocaron)' +
-        (c.cambiaron ? '<br>↕️ ' + c.cambiaron + ' se saltaron porque la fila cambió mientras corría' : '') +
-        (c.ambiguas ? '<br>❔ ' + c.ambiguas + ' con varias carpetas del mismo caso (ambiguas, sin tocar)' : '') +
-        (c.sinAcceso !== undefined
-          ? '<br>🔒 ' + c.sinAcceso + ' sin JSON porque su original no tiene acceso' +
-            '<br>➖ ' + c.sinJson + ' sin JSON ni en la copia ni en el original'
-          : '<br>➖ ' + c.sinJson + ' sin JSON en nuestras carpetas (copiadas sin JSON o solo con originales)')
-      ));
-    }
-    estado.addWidget(CardService.newTextParagraph().setText(
-      '<i>"Actualizar" usa la misma pestaña: los datos actuales se ven mientras corre y se reemplazan al terminar. ' +
-      '"Empezar de cero" solo borra la pestaña y el avance.</i>'
-    ));
-    boton('🔄 Actualizar índice', 'onIniciarIndiceJson', true);
-    boton('🗑️ Empezar de cero', 'onEmpezarDeCeroIndiceJson', false);
-  } else {
-    var lineas = [];
-    if (ocupado && r.parteEnCurso) {
-      lineas.push('⏳ <b>Trabajando ahora: parte ' + r.parteEnCurso.n + ' (' + r.parteEnCurso.origen +
-        ')</b>, empezó a las ' + formatearHoraIndice_(r.parteEnCurso.inicio) +
-        ' (hace ' + formatearDuracionIndice_(ahora - r.parteEnCurso.inicio) + ').');
-      lineas.push('<i>Mientras corre no se puede empezar de cero: se podrá cuando termine esta parte, a más tardar a las ' +
-        formatearHoraIndice_(r.ocupadoHasta) + ', aunque la parte se haya caído.</i>');
-    } else if (r.activador && r.activador.corrioEn) {
-      lineas.push('<font color="#d93025">⚠️ <b>La parte automática empezó a las ' +
-        formatearHoraIndice_(r.activador.corrioEn) + ' pero no terminó bien.</b> Continúa; sigue desde lo último guardado.</font>');
-    } else if (r.activador && r.activador.estado === 'programado') {
-      var espera = ahora - r.activador.en;
-      if (espera < INDICE_CONFIG.ESPERA_ACTIVADOR_MS) {
-        lineas.push('⏱️ <b>La parte ' + (r.parte + 1) + ' arranca sola en unos segundos</b> (programada a las ' +
-          formatearHoraIndice_(r.activador.en) + ').');
-      } else {
-        lineas.push('<font color="#d93025">⚠️ <b>La parte ' + (r.parte + 1) + ' se programó a las ' +
-          formatearHoraIndice_(r.activador.en) + ' y Google no la ha corrido</b> (hace ' +
-          formatearDuracionIndice_(espera) + '). Usa "Avanzar desde aquí".</font>');
-      }
-    } else if (r.activador) {
-      lineas.push('<font color="#d93025">⚠️ <b>No se pudo programar la parte siguiente</b>: ' +
-        escaparHtml(r.activador.detalle || r.activador.estado) + '</font>');
-    } else {
-      lineas.push('⏸️ <b>En pausa.</b> Presiona "Continuar".');
-    }
-    lineas.push(escaparHtml(indiceTextoEtapa_(r)));
-    lineas.push('<i>El avance también se ve en la pestaña "' + INDICE_CONFIG.PESTANA +
-      '". Esta tarjeta no se refresca sola: usa "Ver avance".</i>');
-    estado.addWidget(CardService.newTextParagraph().setText(lineas.join('<br>')));
-
-    if (!ocupado) {
-      boton('▶️ Continuar', 'onContinuarIndiceJson', true);
-    }
-    boton('🔄 Ver avance', 'onVerAvanceIndiceJson', false);
-    boton('🗑️ Empezar de cero', 'onEmpezarDeCeroIndiceJson', false);
-    if (!ocupado && indiceActivadorConProblema_(r, ahora)) {
-      boton('⚙️ Avanzar desde aquí', 'onAvanzarAquiIndiceJson', false);
-    }
-  }
-  if (r && r.ultimoError) {
-    estado.addWidget(CardService.newTextParagraph().setText(
-      '<font color="#d93025">Último error: ' + escaparHtml(r.ultimoError) + '</font>'
-    ));
-  }
-  if (r && r.urlPestana) {
-    botones.addButton(
-      CardService.newTextButton()
-        .setText('Abrir pestaña')
-        .setOpenLink(CardService.newOpenLink().setUrl(r.urlPestana))
-    );
-  }
-  estado.addWidget(botones);
-  card.addSection(estado);
-
-  if (r && r.historial && r.historial.length > 0) {
-    var partes = r.historial.map(function(p) {
-      return 'Parte ' + p.n + ' · ' + p.origen + ' · ' + formatearHoraIndice_(p.inicio) +
-        ' · ' + formatearDuracionIndice_(p.ms) + ' · +' + p.carpetas + ' carpetas, +' + p.jsons + ' JSON';
+function continuarIndiceJson(e) {
+  console.log('[Indice] Activador de la versión anterior: se borra sin hacer nada');
+  try {
+    ScriptApp.getProjectTriggers().forEach(function(t) {
+      if (t.getHandlerFunction() === 'continuarIndiceJson') ScriptApp.deleteTrigger(t);
     });
-    card.addSection(
-      CardService.newCardSection()
-        .setHeader('Partes (la más reciente arriba)')
-        .addWidget(CardService.newTextParagraph().setText(partes.join('<br>')))
-    );
+  } catch (err) {
+    console.log('[Indice] No se pudo borrar el activador anterior: ' + err.message);
   }
-
-  var act = indiceContarActivadores_();
-  card.addSection(
-    CardService.newCardSection()
-      .setHeader('Activadores')
-      .setCollapsible(true)
-      .addWidget(CardService.newTextParagraph().setText(
-        act.error
-          ? 'No se pudieron leer: ' + escaparHtml(act.error)
-          : 'Del índice: ' + act.indice + ' · de reintentos: ' + act.reintentos +
-            ' · de tiempo en total: ' + act.total + ' (tope ' + REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS + ')<br>' +
-            '<i>También se ven en script.google.com → Mis activadores.</i>'
-      ))
-  );
-
-  return card.build();
 }
 
-function respuestaIndiceJson_(aviso) {
-  return CardService.newActionResponseBuilder()
-    .setNavigation(CardService.newNavigation().updateCard(buildIndiceJsonCard_()))
-    .setNotification(CardService.newNotification().setText(aviso))
-    .build();
-}
-
-/**
- * Botón "Índice de JSON" del menú del panel.
- */
 function onAbrirIndiceJson(e) {
-  return CardService.newActionResponseBuilder()
-    .setNavigation(CardService.newNavigation().pushCard(buildIndiceJsonCard_()))
-    .build();
+  return onAbrirBusquedaJson(e);
 }
 
 function onVerAvanceIndiceJson(e) {
-  return CardService.newActionResponseBuilder()
-    .setNavigation(CardService.newNavigation().updateCard(buildIndiceJsonCard_()))
-    .build();
+  return onVerAvanceBusquedaJson(e);
 }
 
-/**
- * "Crear índice" y "Actualizar índice": programa la primera parte sobre la
- * misma pestaña, sin borrarla. No recorre nada aquí.
- */
 function onIniciarIndiceJson(e) {
-  var aviso;
-  try {
-    var motivo = motivoConfigInvalida();
-    if (motivo) throw new Error(motivo);
-    var sheetId = obtenerSheetId();
-    PropertiesService.getUserProperties().setProperty('INDICE_SHEET_ID', sheetId);
-    var ss = SpreadsheetApp.openById(sheetId);
-
-    var ini = iniciarIndiceJson_(ss);
-    if (ini.ocupado) {
-      aviso = 'Hay una parte corriendo.' + indiceTextoEspera_(ini.resumen);
-    } else {
-      var act = indiceProgramarParte_(ss, ini.hoja, ini.resumen);
-      indiceMostrarAvance_(ss, ini.resumen);
-      aviso = act.estado === 'programado'
-        ? 'Índice programado: arranca solo en unos segundos. El avance se ve en la pestaña ' + INDICE_CONFIG.PESTANA + '.'
-        : 'No se pudo programar el índice: ' + (act.detalle || act.estado);
-    }
-  } catch (err) {
-    console.error('[Indice] ' + err.message);
-    aviso = 'No se pudo crear el índice: ' + err.message;
-  }
-  return respuestaIndiceJson_(aviso);
-}
-
-function indiceTextoEspera_(resumen) {
-  return resumen && resumen.ocupadoHasta
-    ? ' Se podrá a más tardar a las ' + formatearHoraIndice_(resumen.ocupadoHasta) + '.'
-    : ' Intenta en unos segundos.';
-}
-
-/**
- * "Empezar de cero": solo borra. Quita la pestaña del índice, el avance
- * guardado y el activador pendiente; no arranca nada. La columna N de la
- * pestaña de solicitudes no se toca.
- */
-function onEmpezarDeCeroIndiceJson(e) {
-  var aviso;
-  var lock = LockService.getScriptLock();
-  var conLock = false;
-  try {
-    conLock = lock.tryLock(10000);
-    if (!conLock) throw new Error('el Sheet está ocupado, intenta en unos segundos.');
-    var ss = SpreadsheetApp.openById(obtenerSheetId());
-    var hoja = ss.getSheetByName(INDICE_CONFIG.PESTANA_AVANCE);
-    var r = hoja ? indiceLeerResumen_(hoja) : null;
-    if (r && r.ocupadoHasta > Date.now()) {
-      aviso = 'Hay una parte corriendo; no se puede borrar todavía.' + indiceTextoEspera_(r);
-    } else {
-      [INDICE_CONFIG.PESTANA, INDICE_CONFIG.PESTANA_SIN_ACCESO].forEach(function(nombre) {
-        var pestana = ss.getSheetByName(nombre);
-        if (pestana) ss.deleteSheet(pestana);
-      });
-      if (hoja) hoja.clearContents();
-      ScriptApp.getProjectTriggers().forEach(function(t) {
-        if (t.getHandlerFunction() === INDICE_CONFIG.HANDLER_ACTIVADOR) ScriptApp.deleteTrigger(t);
-      });
-      aviso = 'Índice borrado. Presiona "Crear índice" cuando quieras empezar.';
-    }
-  } catch (err) {
-    console.error('[Indice] ' + err.message);
-    aviso = 'No se pudo borrar el índice: ' + err.message;
-  } finally {
-    if (conLock) lock.releaseLock();
-  }
-  return respuestaIndiceJson_(aviso);
-}
-
-/**
- * "Continuar": vuelve a programar la parte siguiente sin hacer trabajo aquí.
- */
-function onContinuarIndiceJson(e) {
-  var aviso;
-  try {
-    var ss = SpreadsheetApp.openById(obtenerSheetId());
-    var hoja = indicePestanaAvance_(ss);
-    var r = indiceLeerResumen_(hoja);
-    if (!r || r.etapa === 'terminado') {
-      aviso = 'No hay un índice a medias.';
-    } else if (r.ocupadoHasta > Date.now()) {
-      aviso = 'Ya hay una parte corriendo.';
-    } else {
-      r.ultimoError = '';
-      var act = indiceProgramarParte_(ss, hoja, r);
-      indiceMostrarAvance_(ss, r);
-      aviso = act.estado === 'programado'
-        ? 'Parte ' + (r.parte + 1) + ' programada: arranca sola en unos segundos.'
-        : 'No se pudo programar: ' + (act.detalle || act.estado);
-    }
-  } catch (err) {
-    console.error('[Indice] ' + err.message);
-    aviso = 'No se pudo continuar: ' + err.message;
-  }
-  return respuestaIndiceJson_(aviso);
-}
-
-/**
- * Respaldo si el activador no corre: hace una parte corta desde el panel
- * (una acción de tarjeta tiene 30 s) y no programa la siguiente.
- */
-function onAvanzarAquiIndiceJson(e) {
-  var aviso;
-  try {
-    var res = avanzarIndiceJson_(obtenerSheetId(), INDICE_CONFIG.PRESUPUESTO_BOTON_MS, {
-      origen: 'botón',
-      programarSiguiente: false,
-      margenEscrituraMs: INDICE_CONFIG.MARGEN_ESCRITURA_BOTON_MS
-    });
-    var r = res.resumen || {};
-    if (res.ocupado) aviso = 'Ya hay una parte corriendo.';
-    else if (res.sinTrabajo) aviso = 'No hay un índice a medias.';
-    else if (res.error) aviso = 'No se pudo avanzar: ' + res.error;
-    else if (r.etapa === 'terminado') aviso = 'Índice terminado: ' + r.filasIndice + ' JSON.';
-    else aviso = 'Parte ' + r.parte + ' lista. Presiona otra vez para seguir.';
-  } catch (err) {
-    console.error('[Indice] ' + err.message);
-    aviso = 'No se pudo avanzar: ' + err.message;
-  }
-  return respuestaIndiceJson_(aviso);
-}
-
-// Nombres de botones de versiones anteriores. Una tarjeta que quedó
-// abierta en el panel sigue llamándolos hasta que se vuelve a abrir.
-function onReiniciarIndiceJson(e) {
-  return onEmpezarDeCeroIndiceJson(e);
+  return onBuscarJson(e);
 }
 
 function onActualizarIndiceJson(e) {
-  var r = leerEstadoIndiceJson_();
-  return r && r.etapa !== 'terminado' ? onContinuarIndiceJson(e) : onIniciarIndiceJson(e);
+  return onBuscarJson(e);
+}
+
+function onContinuarIndiceJson(e) {
+  return onContinuarBusquedaJson(e);
+}
+
+function onAvanzarAquiIndiceJson(e) {
+  return onContinuarBusquedaJson(e);
+}
+
+function onEmpezarDeCeroIndiceJson(e) {
+  return indiceRespuestaBusqueda_('Esa opción ya no existe en esta versión.');
+}
+
+function onReiniciarIndiceJson(e) {
+  return onEmpezarDeCeroIndiceJson(e);
 }

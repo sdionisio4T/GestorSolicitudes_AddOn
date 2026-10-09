@@ -310,12 +310,12 @@ function buildPanelSheetsCard_() {
 
   card.addSection(
     CardService.newCardSection()
-      .setHeader('🗂️ Índice de JSON')
-      .addWidget(CardService.newTextParagraph().setText(textoCortoIndiceJson_()))
+      .setHeader('🗂️ JSON de las solicitudes')
+      .addWidget(CardService.newTextParagraph().setText(textoCortoBusquedaJson_()))
       .addWidget(
         CardService.newTextButton()
-          .setText('🗂️ Índice de JSON')
-          .setOnClickAction(CardService.newAction().setFunctionName('onAbrirIndiceJson'))
+          .setText('Abrir')
+          .setOnClickAction(CardService.newAction().setFunctionName('onAbrirBusquedaJson'))
           .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
           .setBackgroundColor('#1a73e8')
       )

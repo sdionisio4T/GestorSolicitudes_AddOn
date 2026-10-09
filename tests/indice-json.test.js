@@ -1,5 +1,5 @@
-// Funciones puras del indice de JSON (src/IndiceJson.gs): lectura de rutas,
-// cruce con filas del Sheet y orden.
+// Funciones de src/IndiceJson.gs: busqueda por numero de caso, columnas
+// N y O, pestana "JSON sin fila", eleccion de filas y activadores.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -11,31 +11,6 @@ const ID = (s) => (s + 'xxxxxxxxxxxxxxxxxxxxxxxxx').slice(0, 25);
 const RAIZ = ID('raiz');
 // Los arreglos creados dentro del contexto de vm tienen otro prototipo.
 const plano = (x) => JSON.parse(JSON.stringify(x));
-
-test('clasificar ruta: Servicio/Caso con subcarpetas', () => {
-  const r = gs.indiceClasificarRuta_(['Pagos', '9300_2', 'Envio 2', 'Ajustes']);
-  assert.strictEqual(r.rama, 'General');
-  assert.strictEqual(r.servicio, 'Pagos');
-  assert.strictEqual(r.carpetaEnvio, '9300_2');
-  assert.strictEqual(r.caso, '9300');
-  assert.strictEqual(r.resto, 'Envio 2/Ajustes');
-});
-
-test('clasificar ruta: APIM y SERVICIOS CAPA', () => {
-  const a = gs.indiceClasificarRuta_(['APIM', 'Pagos', '9300']);
-  assert.strictEqual(a.rama, 'APIM');
-  assert.strictEqual(a.servicio, 'Pagos');
-  assert.strictEqual(a.resto, '');
-  const c = gs.indiceClasificarRuta_(['SERVICIOS CAPA', 'APIM', 'Pagos', '9300', 'x']);
-  assert.strictEqual(c.rama, 'APIM');
-  assert.strictEqual(c.caso, '9300');
-  assert.strictEqual(c.resto, 'x');
-});
-
-test('clasificar ruta: sin nivel de caso devuelve null', () => {
-  assert.strictEqual(gs.indiceClasificarRuta_(['Pagos']), null);
-  assert.strictEqual(gs.indiceClasificarRuta_(['APIM', 'Pagos']), null);
-});
 
 test('limpiar servicio igual que al crear carpetas', () => {
   assert.strictEqual(gs.indiceLimpiarServicio_('https://papi/x'), 'https___papi_x');
@@ -49,76 +24,6 @@ test('cadena de carpetas desde la raiz', () => {
   assert.strictEqual(gs.indiceCadena_(ID('zz'), RAIZ, carpetas), null);
 });
 
-function escenario() {
-  const carpetas = {
-    [ID('srv')]: ['Pagos', RAIZ],
-    [ID('c1')]: ['9300', ID('srv')],
-    [ID('c1sub')]: ['Ajustes', ID('c1')],
-    [ID('c2')]: ['9215', ID('srv')],
-    [ID('c3a')]: ['9100', ID('srv')],
-    [ID('c3b')]: ['9100_2', ID('srv')],
-    [ID('apim')]: ['APIM', RAIZ],
-    [ID('asrv')]: ['Pagos', ID('apim')],
-    [ID('ac1')]: ['9300', ID('asrv')],
-    [ID('otro')]: ['Sueltos', RAIZ]
-  };
-  const jsons = [
-    [ID('j1'), 'config.json', ID('c1sub'), '2026-09-20T10:00:00Z'],
-    [ID('j2'), 'a.json', ID('c2'), ''],
-    [ID('j3'), 'b.json', ID('c3b'), ''],
-    [ID('j4'), 'api.json', ID('ac1'), ''],
-    [ID('j5'), 'suelto.json', ID('otro'), '']
-  ];
-  return { raizId: RAIZ, carpetas, jsons };
-}
-
-test('cruce por carpeta, por ruta, ambiguo y sin fila', () => {
-  const filas = [
-    { fila: 2, caso: '9300', servicio: 'Pagos', componente: 'ESB', ambiente: 'Producción', estado: 'APROBADO', ids: [ID('c1')] },
-    { fila: 3, caso: '9300', servicio: 'Pagos', componente: 'API', ambiente: 'Producción', estado: 'APROBADO', ids: [] },
-    { fila: 4, caso: '9215', servicio: 'Pagos', componente: 'ESB', ambiente: 'Preproducción', estado: 'PENDIENTE', ids: [ID('original')] },
-    { fila: 5, caso: '9100', servicio: 'Pagos', componente: 'ESB', ambiente: 'Pruebas', estado: 'PENDIENTE', ids: [] }
-  ];
-  const res = gs.indiceArmarFilas_(escenario(), filas);
-  const por = (archivo) => res.find((r) => r.archivo === archivo);
-
-  assert.strictEqual(por('config.json').cruce, 'por carpeta');
-  assert.strictEqual(por('config.json').filas, '2');
-  assert.strictEqual(por('config.json').resto, 'Ajustes');
-
-  assert.strictEqual(por('a.json').cruce, 'por ruta');
-  assert.strictEqual(por('a.json').ambiente, 'Preproducción');
-
-  assert.strictEqual(por('b.json').cruce, 'ambiguo');
-  assert.strictEqual(por('b.json').carpetaEnvio, '9100_2');
-
-  assert.strictEqual(por('api.json').cruce, 'por ruta');
-  assert.strictEqual(por('api.json').rama, 'APIM');
-  assert.strictEqual(por('api.json').filas, '3');
-
-  assert.strictEqual(por('suelto.json').cruce, 'sin fila');
-  assert.strictEqual(por('suelto.json').servicio, '(otra ubicación)');
-});
-
-test('una carpeta enlazada por varias filas queda asociada a todas', () => {
-  const filas = [
-    { fila: 2, caso: '9300', servicio: 'Pagos', componente: 'ESB', ambiente: 'Producción', estado: 'APROBADO', ids: [ID('c1')] },
-    { fila: 7, caso: '9300', servicio: 'Pagos', componente: 'EI', ambiente: 'Producción', estado: 'PENDIENTE', ids: [ID('c1')] }
-  ];
-  const res = gs.indiceArmarFilas_(escenario(), filas);
-  const j = res.find((r) => r.archivo === 'config.json');
-  assert.strictEqual(j.filas, '2, 7');
-  assert.strictEqual(j.componente, 'ESB / EI');
-  assert.strictEqual(j.estado, 'APROBADO / PENDIENTE');
-});
-
-test('orden: servicio y luego caso del mas reciente al mas viejo', () => {
-  const res = gs.indiceArmarFilas_(escenario(), []);
-  const pagos = res.filter((r) => r.servicio === 'Pagos' && r.rama === 'General').map((r) => r.caso);
-  assert.deepStrictEqual(plano(pagos), ['9300', '9215', '9100']);
-  assert.strictEqual(res[res.length - 1].servicio, 'Pagos');
-});
-
 test('ids de una celda: links y URLs en texto plano sin repetir', () => {
   const url1 = 'https://drive.google.com/drive/folders/' + ID('f1');
   const url2 = 'https://drive.google.com/file/d/' + ID('f2') + '/view';
@@ -127,45 +32,159 @@ test('ids de una celda: links y URLs en texto plano sin repetir', () => {
   assert.deepStrictEqual(plano(gs.indiceIdsDeCelda_(rich)), [ID('f1'), ID('f2')]);
 });
 
-test('trocear y unir devuelve el mismo texto', () => {
-  const texto = 'x'.repeat(100) + 'y'.repeat(7);
-  const trozos = gs.indiceTrocear_(texto, 25);
-  assert.strictEqual(trozos.length, 5);
-  assert.strictEqual(trozos.join(''), texto);
+// Busqueda por numero de caso (diseno sin pestanas, columnas N y O).
+function arbolPorCaso() {
+  const R = ID('raizCaso');
+  const c = {};
+  const add = (id, nombre, padre) => { c[ID(id)] = [nombre, padre === null ? R : ID(padre)]; };
+  add('pagos', 'Pagos', null);
+  add('c1', '9300', 'pagos');
+  add('c1b', '9300 docs', 'c1');
+  add('sub1', 'Ajustes', 'c1');
+  add('c2', '9300_2', 'pagos');
+  add('c19300', '19300', 'pagos');
+  add('c5555', '5555', 'pagos');
+  add('pagso', 'Pagso', null);
+  add('c3', '9300', 'pagso');
+  add('apim', 'APIM', null);
+  add('asrv', 'Pagos', 'apim');
+  add('a1', '9300', 'asrv');
+  add('resp', 'Respaldo 2026', null);
+  add('m8000', 'caso 8000', null);
+  add('cv', 'Copia vieja', null);
+  const j = (id, nombre, padre, mod, md5) => [ID(id), nombre, ID(padre), mod, md5];
+  return {
+    raizId: R,
+    carpetas: c,
+    jsons: [
+      j('j1', 'config.json', 'c1', '2026-09-01T00:00:00Z', 'A'),
+      j('j2', 'config.json', 'c2', '2026-09-05T00:00:00Z', 'A'),
+      j('j3', 'tarifas.json', 'c2', '2026-09-05T00:00:00Z', 'B'),
+      j('j4', 'config.json', 'a1', '2026-09-10T00:00:00Z', 'C'),
+      j('j5', 'extra.json', 'sub1', '2026-09-02T00:00:00Z', 'D'),
+      j('j6', 'x.json', 'c19300', '2026-09-02T00:00:00Z', 'E'),
+      j('j7', 'notas.json', 'resp', '2026-09-02T00:00:00Z', 'F'),
+      j('j8', 'm.json', 'm8000', '2026-09-02T00:00:00Z', 'G'),
+      j('j9', 'cv.json', 'cv', '2026-09-02T00:00:00Z', 'H')
+    ]
+  };
+}
+
+test('numeros de caso en nombres de carpeta: completos y sin el sufijo _N', () => {
+  const n = (s) => plano(gs.indiceNumerosEnNombre_(s));
+  assert.deepStrictEqual(n('9300'), ['9300']);
+  assert.deepStrictEqual(n('9300_2'), ['9300']);
+  assert.deepStrictEqual(n('caso 9300'), ['9300']);
+  assert.deepStrictEqual(n('19300'), ['19300']);
+  assert.deepStrictEqual(n('Pagos'), []);
+  assert.deepStrictEqual(n('0912'), ['912']);
+  assert.strictEqual(gs.indiceNormalizarCaso_(9300), '9300');
+  assert.strictEqual(gs.indiceNormalizarCaso_(' 09300 '), '9300');
+  assert.strictEqual(gs.indiceNormalizarCaso_('abc'), '');
 });
 
-test('plan de la columna N: solo cruces seguros, ambiguas aparte', () => {
-  const filasSheet = [
-    { fila: 2, caso: '9300', servicio: 'Pagos' },
-    { fila: 3, caso: '9300', servicio: 'Pagos' },
-    { fila: 4, caso: '9100', servicio: 'Pagos' },
-    { fila: 5, caso: '9000', servicio: 'Pagos' }
-  ];
-  const indice = [
-    { url: 'u1', cruce: 'por carpeta', numerosFila: [3, 2] },
-    { url: 'u2', cruce: 'por ruta', numerosFila: [2] },
-    { url: 'u1', cruce: 'por carpeta', numerosFila: [2] },
-    { url: 'u3', cruce: 'ambiguo', numerosFila: [4] },
-    { url: 'u4', cruce: 'sin fila', numerosFila: [] }
-  ];
-  const plan = plano(gs.indicePlanColumnaN_(indice, filasSheet));
-  assert.deepStrictEqual(plan.objetivos.map((o) => [o.fila, o.urls]), [[2, ['u1', 'u2']], [3, ['u1']]]);
-  assert.strictEqual(plan.ambiguas, 1);
-  assert.strictEqual(plan.sinJson, 1);
+test('directorio por caso: todas las carpetas del numero, en cualquier rama', () => {
+  const dir = gs.indiceDirectorioPorCaso_(arbolPorCaso());
+  const e = dir.porCaso['9300'];
+  const ids = plano(e.carpetas.map((c) => c.id)).sort();
+  assert.deepStrictEqual(ids, [ID('a1'), ID('c1'), ID('c1b'), ID('c2'), ID('c3')].sort());
+  assert.strictEqual(e.carpetas.find((c) => c.id === ID('a1')).rama, 'APIM');
+  assert.strictEqual(e.carpetas.find((c) => c.id === ID('c1')).rama, 'General');
+  const jsons = plano(e.jsons.map((j) => j.id)).sort();
+  assert.deepStrictEqual(jsons, [ID('j1'), ID('j2'), ID('j3'), ID('j4'), ID('j5')].sort());
+  assert.deepStrictEqual(plano(dir.casosDeJson[ID('j6')]), ['19300']);
+  assert.deepStrictEqual(plano(dir.casosDeJson[ID('j9')]), []);
 });
 
-test('texto de la columna N: una URL por linea con tope', () => {
-  assert.strictEqual(gs.indiceTextoColumnaN_(['a', 'b']), 'a\nb');
-  const muchas = ['1', '2', '3', '4', '5', '6', '7', '8'];
-  const texto = gs.indiceTextoColumnaN_(muchas);
-  assert.strictEqual(texto.split('\n').length, 7);
-  assert.match(texto, /y 2 más en la pestaña Índice JSON$/);
+test('JSON del caso: identicos una vez (prioridad sin _N), modificados los dos', () => {
+  const dir = gs.indiceDirectorioPorCaso_(arbolPorCaso());
+  const res = plano(gs.indiceJsonDelCaso_(dir.porCaso['9300']).map((j) => j.id));
+  // config.json: j4 (APIM, otro contenido, mas reciente) y j1 (sin _2, gana a j2).
+  assert.deepStrictEqual(res, [ID('j4'), ID('j1'), ID('j5'), ID('j3')]);
 });
 
-// Sheet en memoria: filas como arreglos [caso, servicio, ..., N].
-function hojaFalsa(filas) {
+test('repetidos: con el mismo sufijo, gana el mas reciente; sin huella, todos', () => {
+  const r = plano(gs.indiceQuitarRepetidos_([
+    { id: 'a', nombre: 'x.json', md5: 'M', modificado: '2026-01-01', conSufijo: false },
+    { id: 'b', nombre: 'x.json', md5: 'M', modificado: '2026-02-01', conSufijo: false },
+    { id: 'c', nombre: 'y.json', md5: '', modificado: '2026-01-01', conSufijo: true },
+    { id: 'd', nombre: 'y.json', md5: '', modificado: '2026-01-01', conSufijo: true }
+  ]).map((j) => j.id));
+  assert.deepStrictEqual(r, ['b', 'c', 'd']);
+});
+
+test('carpeta de la fila: por ruta, de respaldo por numero en su rama', () => {
+  const arbol = arbolPorCaso();
+  const dir = gs.indiceDirectorioPorCaso_(arbol);
+  const f = (servicio, componente, caso, ids) => plano(gs.indiceCarpetaDeFila_(
+    { caso, servicio, componente, ids: ids || [] }, arbol, dir));
+  const ids = (r) => r.carpetas.map((c) => c.id);
+
+  const esb = f('Pagos', 'ESB', '9300');
+  assert.strictEqual(esb.por, 'ruta');
+  assert.deepStrictEqual(ids(esb), [ID('c1'), ID('c2')]);
+
+  const api = f('Pagos', 'API', '9300');
+  assert.strictEqual(api.por, 'ruta');
+  assert.deepStrictEqual(ids(api), [ID('a1')]);
+
+  // Servicio escrito distinto: por numero, solo en su rama y sin subcarpetas repetidas.
+  const otroNombre = f('Pagos SA', 'ESB', '9300');
+  assert.strictEqual(otroNombre.por, 'numero');
+  assert.deepStrictEqual(ids(otroNombre).sort(), [ID('c1'), ID('c2'), ID('c3')].sort());
+
+  const apiOtroNombre = f('Otro', 'APIM', '9300');
+  assert.strictEqual(apiOtroNombre.por, 'numero');
+  assert.deepStrictEqual(ids(apiOtroNombre), [ID('a1')]);
+
+  assert.strictEqual(f('Pagos', 'ESB', '9300', [ID('c1')]).yaEnlazada, true);
+  assert.strictEqual(f('Pagos', 'ESB', '7000').por, null);
+});
+
+test('resultado de la fila: links del caso, links de C y D, o el motivo', () => {
+  const arbol = arbolPorCaso();
+  const dir = gs.indiceDirectorioPorCaso_(arbol);
+  const O = ID('orig1');
+  const originales = {
+    estados: { [O]: 'carpeta', [ID('orig2')]: 'sin_acceso', [ID('pdf')]: 'otro' },
+    carpetas: { [O]: ['Entrega', null] },
+    jsons: [[ID('jo'), 'o.json', O, '2026-09-01T00:00:00Z', 'Z']]
+  };
+  const r = (caso, ids, orig) => plano(gs.indiceResultadoFila_(
+    { caso, servicio: 'X', componente: 'ESB', ids: ids || [] }, arbol, dir,
+    orig === undefined ? originales : orig));
+  const url = (id) => 'https://drive.google.com/file/d/' + ID(id) + '/view';
+
+  assert.deepStrictEqual(r('9300').links, [url('j4'), url('j1'), url('j5'), url('j3')]);
+  assert.strictEqual(r('5555').motivo, 'Hay carpeta del caso en el Drive, pero no tiene JSON');
+  assert.deepStrictEqual(r('8000').links, [url('j8')]);
+  assert.deepStrictEqual(r('4444', [ID('cv')]).links, [url('j9')]);
+  assert.deepStrictEqual(r('3333', [O]).links, [url('jo')]);
+  assert.strictEqual(r('3333', [ID('orig2')]).motivo, 'Sin acceso al original o fue borrado; pedir permiso');
+  assert.strictEqual(r('3333', [ID('pdf')]).motivo, 'El original no tiene JSON');
+  assert.strictEqual(r('3333', []).motivo, 'No hay carpeta del caso en el Drive ni link en la fila');
+  assert.strictEqual(r('3333', [O], null).pendiente, true);
+});
+
+test('celda N: vacia se escribe, links no se tocan, mixta se limpia, motivo solo al revisar', () => {
+  const links = { links: ['https://a', 'https://b'], motivo: null };
+  const motivo = { links: [], motivo: 'El original no tiene JSON' };
+  const d = (actual, res, revisar) => plano(gs.indiceDecidirCeldaN_(actual, res, revisar));
+
+  assert.deepStrictEqual(d('', links, false), { accion: 'escribir', texto: 'https://a\nhttps://b', tipo: 'links' });
+  assert.deepStrictEqual(d('', motivo, false), { accion: 'escribir', texto: 'El original no tiene JSON', tipo: 'motivo' });
+  assert.strictEqual(d('https://ya', links, true).accion, 'nada');
+  assert.deepStrictEqual(d('Sin acceso al original o fue borrado; pedir permiso\nhttps://nuevo', motivo, false),
+    { accion: 'limpiar', texto: 'https://nuevo', tipo: 'limpiada' });
+  assert.strictEqual(d('El original no tiene JSON', links, false).accion, 'nada');
+  assert.strictEqual(d('Sin acceso al original o fue borrado; pedir permiso', links, true).accion, 'escribir');
+  assert.strictEqual(d('El original no tiene JSON', motivo, true).tipo, 'mismoMotivo');
+  assert.strictEqual(d('', { pendiente: true, links: [], motivo: null }, false).accion, 'nada');
+});
+
+// Sheet en memoria con columnas hasta la O.
+function hojaConO(filas) {
   const escritas = {};
-  const N = gs.SHEET_COLS.ARCHIVOS_JSON;
   return {
     escritas,
     hoja: {
@@ -173,13 +192,15 @@ function hojaFalsa(filas) {
       getRange(fila, col, nFilas = 1, nCols = 1) {
         return {
           getValues: () => Array.from({ length: nFilas }, (_, i) =>
-            Array.from({ length: nCols }, (_, j) => filas[fila - 1 + i][col - 1 + j])),
-          getValue: () => filas[fila - 1][col - 1],
-          setValue() { return this; },
+            Array.from({ length: nCols }, (_, j) => (filas[fila - 1 + i][col - 1 + j] ?? ''))),
+          getValue: () => filas[fila - 1][col - 1] ?? '',
+          setValue(v) { filas[fila - 1][col - 1] = v; return this; },
           setFontWeight() { return this; },
           setRichTextValues(valores) {
-            assert.strictEqual(col, N);
-            valores.forEach((v, i) => { escritas[fila + i] = v[0].getText(); });
+            valores.forEach((v, i) => {
+              escritas[(fila + i) + ',' + col] = v[0].getText();
+              filas[fila - 1 + i][col - 1] = v[0].getText();
+            });
           }
         };
       }
@@ -187,93 +208,121 @@ function hojaFalsa(filas) {
   };
 }
 
-test('bloque de la columna N: verifica cada fila y no pisa lo que hay', () => {
+test('bloque de filas: escribe N y O con las reglas y respeta lo que ya hay', () => {
   const N = gs.SHEET_COLS.ARCHIVOS_JSON;
-  const fila = (caso, servicio, n) => {
-    const f = new Array(N).fill('');
-    f[0] = caso; f[1] = servicio; f[N - 1] = n;
+  const O = gs.INDICE_COL_CARPETA;
+  const fila = (caso, servicio, n, o) => {
+    const f = new Array(O).fill('');
+    f[0] = caso; f[1] = servicio; f[N - 1] = n || ''; f[O - 1] = o || '';
     return f;
   };
   const datos = [
-    fila('Número de caso', 'Servicio', 'Archivos JSON'),
-    fila(9300, 'Pagos', ''),
-    fila(9300, 'Pagos', 'https://ya/estaba'),
-    fila(9215, 'Pagos', ''),
-    fila(9100, 'Pagos', '')
+    fila('Número de caso', 'Servicio', 'Archivos JSON', ''),
+    fila(9300, 'Pagos'),                                    // 2: vacia
+    fila(9300, 'Pagos', 'https://ya/estaba', 'Mi nota'),    // 3: links y O con datos
+    fila(8000, 'Viejo', 'Sin acceso al original o fue borrado; pedir permiso\nhttps://nuevo'), // 4: mixta
+    fila(7000, 'Otro', 'El original no tiene JSON'),        // 5: solo motivo
+    fila(9999, 'Pagos')                                     // 6: cambio de caso
   ];
-  const { hoja, escritas } = hojaFalsa(datos);
+  const { hoja, escritas } = hojaConO(datos);
   gs.obtenerSheetTab = () => 'Solicitudes';
   gs.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
   gs.SpreadsheetApp.flush = () => {};
   const ss = { getSheetByName: () => hoja };
 
-  const cuenta = { llenadas: 0, yaTenian: 0, cambiaron: 0 };
+  const carpeta = { por: 'ruta', carpetas: [{ id: ID('c1'), ruta: 'Pagos/9300' }, { id: ID('c2'), ruta: 'Pagos/9300_2' }] };
+  const conLinks = { links: ['https://json1'], motivo: null };
   const bloque = [
-    { fila: 2, caso: '9300', servicio: 'Pagos', urls: ['https://a'] },
-    { fila: 3, caso: '9300', servicio: 'Pagos', urls: ['https://b'] },
-    // La fila 4 ahora es otro caso: alguien ordeno el Sheet.
-    { fila: 4, caso: '9999', servicio: 'Pagos', urls: ['https://c'] },
-    { fila: 5, caso: '9100', servicio: 'Pagos', urls: ['https://d', 'https://e'] },
-    // Ya no existe: el Sheet tiene 5 filas.
-    { fila: 6, caso: '9000', servicio: 'Pagos', urls: ['https://f'] }
+    { fila: 2, caso: '9300', servicio: 'Pagos', resultado: conLinks, carpeta },
+    { fila: 3, caso: '9300', servicio: 'Pagos', resultado: conLinks, carpeta },
+    { fila: 4, caso: '8000', servicio: 'Viejo', resultado: { links: [], motivo: 'x' }, carpeta: { por: 'numero', carpetas: [{ id: ID('c8'), ruta: 'caso 8000' }] } },
+    { fila: 5, caso: '7000', servicio: 'Otro', resultado: conLinks, carpeta: null },
+    { fila: 6, caso: '1234', servicio: 'Pagos', resultado: conLinks, carpeta }
   ];
-  assert.strictEqual(gs.indiceEscribirBloqueN_(ss, bloque, cuenta), true);
-  assert.deepStrictEqual(plano(cuenta), { llenadas: 2, yaTenian: 1, cambiaron: 2 });
-  assert.deepStrictEqual(plano(escritas), { 2: 'https://a', 5: 'https://d\nhttps://e' });
+  const cuenta = { cambiaron: 0 };
+  assert.strictEqual(gs.indiceEscribirBloqueFilas_(ss, bloque, cuenta, false), true);
+
+  assert.strictEqual(escritas['2,' + N], 'https://json1');
+  assert.strictEqual(escritas['2,' + O], 'Pagos/9300\nPagos/9300_2');
+  assert.strictEqual(escritas['3,' + N], undefined);
+  assert.strictEqual(escritas['3,' + O], undefined);
+  assert.strictEqual(escritas['4,' + N], 'https://nuevo');
+  assert.strictEqual(escritas['4,' + O], 'Por número de caso: caso 8000');
+  assert.strictEqual(escritas['5,' + N], undefined);
+  assert.strictEqual(escritas['6,' + N], undefined);
+  assert.strictEqual(datos[0][O - 1], 'Carpeta copiada');
+  assert.deepStrictEqual(plano(cuenta), { cambiaron: 1, links: 1, yaTenia: 1, limpiada: 1, conMotivo: 1, carpetas: 2 });
+
+  // Al revisar avisos, la fila 5 (solo motivo) si se actualiza.
+  const cuenta2 = { cambiaron: 0 };
+  gs.indiceEscribirBloqueFilas_(ss, [bloque[3]], cuenta2, true);
+  assert.strictEqual(escritas['5,' + N], 'https://json1');
 });
 
-// Originales: filas sin copia en nuestra raiz.
-function escenarioOriginales() {
-  const datos = escenario();
+test('eleccion de filas: normal toma N vacias y mixtas; revisar toma solo motivos desde la fila', () => {
   const filas = [
-    // Con copia por link: no va a originales aunque tenga otro link en D.
-    { fila: 2, caso: '9300', servicio: 'Pagos', componente: 'ESB', ambiente: 'Producción', estado: 'APROBADO', ids: [ID('c1'), ID('origA')] },
-    // Con copia por ruta (Pagos/9215 existe): tampoco.
-    { fila: 3, caso: '9215', servicio: 'Pagos', componente: 'ESB', ambiente: 'Pruebas', estado: 'PENDIENTE', ids: [ID('origB')] },
-    // Sin copia: dos filas con el mismo original (filas independientes).
-    { fila: 4, caso: '8000', servicio: 'Viejo', componente: 'ESB', ambiente: 'Producción', estado: 'APROBADO', ids: [ID('origC')] },
-    { fila: 5, caso: '8000', servicio: 'Viejo', componente: 'EI', ambiente: 'Producción', estado: 'PENDIENTE', ids: [ID('origC')] },
-    // Sin copia, original sin acceso.
-    { fila: 6, caso: '7000', servicio: 'Otro', componente: 'ESB', ambiente: 'Pruebas', estado: 'PENDIENTE', ids: [ID('origX')] },
-    // Sin copia, link directo a un .json suelto.
-    { fila: 7, caso: '6000', servicio: 'Suelto', componente: 'ESB', ambiente: 'Pruebas', estado: 'PENDIENTE', ids: [ID('jsonD')] }
+    { fila: 2, textoN: '', textoO: '' },
+    { fila: 3, textoN: 'https://a', textoO: '' },
+    { fila: 4, textoN: 'El original no tiene JSON\nhttps://b', textoO: '' },
+    { fila: 5, textoN: 'El original no tiene JSON', textoO: '' },
+    { fila: 6, textoN: 'Sin acceso al original o fue borrado; pedir permiso', textoO: 'Pagos/1' },
+    { fila: 7, textoN: 'https://c', textoO: 'Pagos/9300' }
   ];
-  return { datos, filas };
-}
+  // La fila 3 tiene carpeta encontrada y O vacia: entra solo para la O.
+  const carpetaDe = (f) => (f.fila === 3 || f.fila === 7
+    ? { por: 'ruta', carpetas: [{ id: 'x', ruta: 'Pagos/9300' }] }
+    : { por: null, carpetas: [] });
+  const resumen = (lista) => plano(lista.map((f) => [f.fila, f.necesitaN, f.limpiar, f.soloCarpeta]));
 
-test('originales: solo se revisan links de filas sin copia, una vez por link', () => {
-  const { datos, filas } = escenarioOriginales();
-  const rev = gs.indiceOriginalesPorRevisar_(datos, filas);
-  assert.deepStrictEqual(plano(rev.ids), [ID('origC'), ID('origX'), ID('jsonD')]);
-  assert.deepStrictEqual(plano(rev.porId[ID('origC')].map((f) => f.fila)), [4, 5]);
+  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'normal', 0, carpetaDe)),
+    [[2, true, false, false], [3, false, false, true], [4, false, true, false]]);
+  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'revisar', 6, carpetaDe)),
+    [[3, false, false, true], [4, false, true, false], [6, true, false, false]]);
 });
 
-test('originales: JSON en subcarpetas y sueltos se cruzan con sus filas', () => {
-  const { datos, filas } = escenarioOriginales();
-  datos.originales = {
-    estados: { [ID('origC')]: 'carpeta', [ID('origX')]: 'sin_acceso', [ID('jsonD')]: 'json' },
-    carpetas: { [ID('origC')]: ['Entrega 8000', null], [ID('sub')]: ['Config', ID('origC')] },
-    jsons: [[ID('jo1'), 'orig.json', ID('sub'), ''], [ID('jsonD'), 'suelto.json', '', '']]
-  };
-  const res = plano(gs.indiceArmarFilas_(datos, filas));
-  const o1 = res.find((r) => r.archivo === 'orig.json');
-  assert.strictEqual(o1.origen, 'Original');
-  assert.strictEqual(o1.cruce, 'por link original');
-  assert.strictEqual(o1.filas, '4, 5');
-  assert.strictEqual(o1.carpetaEnvio, 'Entrega 8000');
-  assert.strictEqual(o1.resto, 'Config');
-  assert.strictEqual(o1.rama, '');
-  const o2 = res.find((r) => r.archivo === 'suelto.json' && r.origen === 'Original');
-  assert.strictEqual(o2.filas, '7');
-  assert.ok(res.filter((r) => r.origen === 'Copia').length > 0);
+test('JSON sin fila: caso que no esta en el Sheet, carpeta sin numero, y lo enlazado no entra', () => {
+  const arbol = arbolPorCaso();
+  // Copia identica de x.json en otra carpeta sin fila: debe salir dos veces.
+  arbol.jsons.push([ID('j6b'), 'x.json', ID('resp'), '2026-09-02T00:00:00Z', 'E']);
+  const dir = gs.indiceDirectorioPorCaso_(arbol);
+  const filas = [{ caso: '9300', ids: [] }, { caso: '8000', ids: [] }, { caso: '5555', ids: [] }];
+  const lista = plano(gs.indiceJsonSinFila_(arbol, dir, filas));
+  assert.deepStrictEqual(lista.map((s) => [s.ruta, s.nombre, s.numeros, s.motivo]), [
+    ['Copia vieja', 'cv.json', '', 'La carpeta no tiene número de caso y ninguna fila la enlaza'],
+    ['Pagos/19300', 'x.json', '19300', 'Ninguna fila tiene el caso 19300'],
+    ['Respaldo 2026', 'notas.json', '2026', 'Ninguna fila tiene el caso 2026'],
+    ['Respaldo 2026', 'x.json', '2026', 'Ninguna fila tiene el caso 2026']
+  ]);
 
-  const sinAcceso = plano(gs.indiceFilasSinAcceso_(datos, filas));
-  assert.deepStrictEqual(sinAcceso.map((s) => s.fila), [6]);
+  // Si una fila enlaza la carpeta "Copia vieja", su JSON ya tiene fila.
+  const conEnlace = filas.concat([{ caso: '4444', ids: [ID('cv')] }]);
+  const lista2 = plano(gs.indiceJsonSinFila_(arbol, dir, conEnlace));
+  assert.ok(!lista2.some((s) => s.nombre === 'cv.json'));
+});
 
-  const marcadas = {};
-  sinAcceso.forEach((s) => { marcadas[s.fila] = true; });
-  const plan = plano(gs.indicePlanColumnaN_(res, filas, marcadas));
-  assert.deepStrictEqual(plan.objetivos.map((o) => o.fila), [2, 3, 4, 5, 7]);
-  assert.strictEqual(plan.sinAcceso, 1);
-  assert.strictEqual(plan.sinJson, 0);
+test('fin de una parte: programar si avanzo, parar sin avance o al tope, nada si termino', () => {
+  const d = (res, filaAntes) => plano(gs.indiceDecidirSiguiente_(res, filaAntes, 20));
+  assert.strictEqual(d({ terminado: true, nota: { partes: 1 } }, 0).accion, 'nada');
+  assert.strictEqual(d({ ocupado: true }, 0).accion, 'nada');
+  assert.strictEqual(d({ nota: { partes: 1, filaActual: 300 } }, 0).accion, 'programar');
+  assert.strictEqual(d({ nota: { partes: 20, filaActual: 300 } }, 0).accion, 'parar');
+  const sinAvance = d({ nota: { partes: 3, filaActual: 300, ultimoError: 'Drive caído' } }, 300);
+  assert.strictEqual(sinAvance.accion, 'parar');
+  assert.match(sinAvance.motivo, /Drive caído/);
+});
+
+test('celda de carpeta: cada linea con el link a su carpeta', () => {
+  const v = gs.indiceCeldaCarpeta_({ por: 'ruta', carpetas: [{ id: ID('c1'), ruta: 'Pagos/9300' }, { id: ID('c2'), ruta: 'Pagos/9300_2' }] });
+  const runs = v.getRuns().filter((r) => r.getLinkUrl());
+  assert.deepStrictEqual(runs.map((r) => r.getText()), ['Pagos/9300', 'Pagos/9300_2']);
+  assert.strictEqual(runs[1].getLinkUrl(), 'https://drive.google.com/drive/folders/' + ID('c2'));
+});
+
+test('sufijo de reenvio: solo pegado a un numero y de hasta 3 digitos', () => {
+  assert.strictEqual(gs.indiceQuitarSufijo_('9300_2'), '9300');
+  assert.strictEqual(gs.indiceQuitarSufijo_('9300_12'), '9300');
+  assert.strictEqual(gs.indiceQuitarSufijo_('caso_9300'), 'caso_9300');
+  assert.strictEqual(gs.indiceQuitarSufijo_('Pagos_9300'), 'Pagos_9300');
+  assert.deepStrictEqual(plano(gs.indiceNumerosEnNombre_('caso_9300')), ['9300']);
+  assert.deepStrictEqual(plano(gs.indiceNumerosEnNombre_('Pagos_9300_2')), ['9300']);
 });
