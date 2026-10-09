@@ -304,9 +304,10 @@ function onHomepageSheets(e) {
     return [buildCardConfigApropiada(motivo)];
   }
 
-  // Si una búsqueda de JSON quedó esperando (Google no deja que un
-  // activador del Sheet programe al siguiente antes de una hora), abrir el
-  // panel la reanuda: desde una acción del usuario sí se puede programar.
+  // Google no deja que un activador del Sheet programe al siguiente antes de
+  // una hora; desde una acción del usuario sí. Abrir el panel deja lista la
+  // parte siguiente de una búsqueda de JSON que corre, o reanuda la que
+  // quedó esperando.
   indiceReanudarSiHaceFalta_('Sheets');
 
   return [buildPanelSheetsCard_()];

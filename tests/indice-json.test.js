@@ -78,6 +78,10 @@ test('numeros de caso en nombres de carpeta: completos y sin el sufijo _N', () =
   assert.deepStrictEqual(n('19300'), ['19300']);
   assert.deepStrictEqual(n('Pagos'), []);
   assert.deepStrictEqual(n('0912'), ['912']);
+  // Versiones y nombres de productos no son casos.
+  assert.deepStrictEqual(n('v1.0.1'), []);
+  assert.deepStrictEqual(n('Documentación API OpenAPI -Swagger- WSO2'), []);
+  assert.deepStrictEqual(n('7799 v1.0'), ['7799']);
   assert.strictEqual(gs.indiceNormalizarCaso_(9300), '9300');
   assert.strictEqual(gs.indiceNormalizarCaso_(' 09300 '), '9300');
   assert.strictEqual(gs.indiceNormalizarCaso_('abc'), '');
@@ -156,29 +160,29 @@ test('resultado de la fila: links del caso, links de C y D, o el motivo', () => 
   const url = (id) => 'https://drive.google.com/file/d/' + ID(id) + '/view';
 
   assert.deepStrictEqual(r('9300').links, [url('j4'), url('j1'), url('j5'), url('j3')]);
-  assert.strictEqual(r('5555').motivo, 'Hay carpeta del caso en el Drive, pero no tiene JSON');
+  assert.strictEqual(r('5555').motivo, 'Carpeta sin JSON');
   assert.deepStrictEqual(r('8000').links, [url('j8')]);
   assert.deepStrictEqual(r('4444', [ID('cv')]).links, [url('j9')]);
   assert.deepStrictEqual(r('3333', [O]).links, [url('jo')]);
-  assert.strictEqual(r('3333', [ID('orig2')]).motivo, 'Sin acceso al original o fue borrado; pedir permiso');
-  assert.strictEqual(r('3333', [ID('pdf')]).motivo, 'El original no tiene JSON');
-  assert.strictEqual(r('3333', []).motivo, 'No hay carpeta del caso en el Drive ni link en la fila');
+  assert.strictEqual(r('3333', [ID('orig2')]).motivo, 'Sin acceso al original');
+  assert.strictEqual(r('3333', [ID('pdf')]).motivo, 'Original sin JSON');
+  assert.strictEqual(r('3333', []).motivo, 'Sin carpeta ni link');
   assert.strictEqual(r('3333', [O], null).pendiente, true);
 });
 
 test('celda N: vacia se escribe, links no se tocan, mixta se limpia, motivo solo al revisar', () => {
   const links = { links: ['https://a', 'https://b'], motivo: null };
-  const motivo = { links: [], motivo: 'El original no tiene JSON' };
+  const motivo = { links: [], motivo: 'Original sin JSON' };
   const d = (actual, res, revisar) => plano(gs.indiceDecidirCeldaN_(actual, res, revisar));
 
   assert.deepStrictEqual(d('', links, false), { accion: 'escribir', texto: 'https://a\nhttps://b', tipo: 'links' });
-  assert.deepStrictEqual(d('', motivo, false), { accion: 'escribir', texto: 'El original no tiene JSON', tipo: 'motivo' });
+  assert.deepStrictEqual(d('', motivo, false), { accion: 'escribir', texto: 'Original sin JSON', tipo: 'motivo' });
   assert.strictEqual(d('https://ya', links, true).accion, 'nada');
   assert.deepStrictEqual(d('Sin acceso al original o fue borrado; pedir permiso\nhttps://nuevo', motivo, false),
     { accion: 'limpiar', texto: 'https://nuevo', tipo: 'limpiada' });
   assert.strictEqual(d('El original no tiene JSON', links, false).accion, 'nada');
   assert.strictEqual(d('Sin acceso al original o fue borrado; pedir permiso', links, true).accion, 'escribir');
-  assert.strictEqual(d('El original no tiene JSON', motivo, true).tipo, 'mismoMotivo');
+  assert.strictEqual(d('Original sin JSON', motivo, true).tipo, 'mismoMotivo');
   assert.strictEqual(d('', { pendiente: true, links: [], motivo: null }, false).accion, 'nada');
 });
 
@@ -388,6 +392,62 @@ test('reanudar: solo si la parte siguiente esta esperando y nadie la detuvo', ()
   assert.strictEqual(r({ etapa: 'buscando', activador: { estado: 'error', en: ahora } }), true);
   // Parte cortada por Google: si.
   assert.strictEqual(r({ etapa: 'buscando', parteIniciadaEn: ahora - 10 * 60000, ocupadoHasta: ahora + 1 }), true);
+});
+
+test('dejar lista la parte siguiente: solo mientras corre una y una vez por parte', () => {
+  const ahora = 100 * 60 * 1000;
+  const a = (nota) => gs.indiceDebeAdelantar_(nota, ahora);
+  const corriendo = { etapa: 'buscando', partes: 1, ocupadoHasta: ahora + 60000, parteIniciadaEn: ahora - 60000 };
+  assert.strictEqual(a(null), false);
+  assert.strictEqual(a(corriendo), true);
+  // Ya se dejo lista para esta parte (o se intento): no otra vez.
+  assert.strictEqual(a({ ...corriendo, adelantada: { parte: 1 } }), false);
+  // Quedo de la parte anterior: si.
+  assert.strictEqual(a({ ...corriendo, partes: 2, adelantada: { parte: 1 } }), true);
+  // Sin parte corriendo, detenida, terminada o cortada: no.
+  assert.strictEqual(a({ ...corriendo, ocupadoHasta: 0 }), false);
+  assert.strictEqual(a({ ...corriendo, detener: true }), false);
+  assert.strictEqual(a({ ...corriendo, etapa: 'terminado' }), false);
+  assert.strictEqual(a({ ...corriendo, parteIniciadaEn: ahora - 10 * 60000 }), false);
+});
+
+test('dejar lista la parte siguiente: arranca poco despues del fin previsto de la que corre', () => {
+  const ahora = 100 * 60 * 1000;
+  const B = gs.INDICE_BUSQUEDA;
+  // Clic al minuto de empezar: falta el resto del presupuesto mas el margen.
+  assert.strictEqual(gs.indiceRetrasoAdelanto_({ parteIniciadaEn: ahora - 60000 }, ahora),
+    B.PRESUPUESTO_MS + B.MARGEN_ADELANTO_MS - 60000);
+  // Clic justo al final: nunca menos que el retraso normal.
+  assert.strictEqual(gs.indiceRetrasoAdelanto_({ parteIniciadaEn: ahora - 10 * 60000 }, ahora),
+    gs.REINTENTOS_CONFIG.DELAY_TRIGGER_MS);
+});
+
+test('esperar turno: una parte que arranca antes espera a que termine la anterior', () => {
+  const props = {};
+  let reloj = 100 * 60 * 1000;
+  const fin = reloj + 20000;
+  const nota = { etapa: 'buscando', ocupadoHasta: fin + 60000, parteIniciadaEn: reloj - 60000 };
+  props.INDICE_NOTA_X = JSON.stringify(nota);
+  gs.PropertiesService = { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null }) };
+  const UtilitiesReal = gs.Utilities;
+  const DateReal = gs.Date;
+  gs.Utilities = { sleep: (ms) => {
+    reloj += ms;
+    if (reloj >= fin) props.INDICE_NOTA_X = JSON.stringify({ ...nota, ocupadoHasta: 0 });
+  } };
+  gs.Date = { now: () => reloj };
+  try {
+    assert.strictEqual(gs.indiceEsperarTurno_('X'), 20000);
+    // Sin parte corriendo: no espera.
+    assert.strictEqual(gs.indiceEsperarTurno_('X'), 0);
+    // La anterior no termina: espera hasta el tope y sigue.
+    props.INDICE_NOTA_X = JSON.stringify({ ...nota, ocupadoHasta: reloj + 10 * 60000, parteIniciadaEn: reloj });
+    gs.Utilities = { sleep: (ms) => { reloj += ms; } };
+    assert.strictEqual(gs.indiceEsperarTurno_('X'), gs.INDICE_BUSQUEDA.ESPERA_TURNO_MS);
+  } finally {
+    gs.Date = DateReal;
+    gs.Utilities = UtilitiesReal;
+  }
 });
 
 test('empezar de cero: en la N solo se borran las celdas con motivo, nunca las que tienen links', () => {

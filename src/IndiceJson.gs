@@ -117,10 +117,10 @@ function indiceOrigenDeJson_(j, O) {
 //            jsons: [[id, nombre, padre, modificadoIso, md5]] }
 
 var INDICE_MOTIVOS = {
-  carpeta_sin_json: 'Hay carpeta del caso en el Drive, pero no tiene JSON',
-  original_sin_acceso: 'Sin acceso al original o fue borrado; pedir permiso',
-  original_sin_json: 'El original no tiene JSON',
-  sin_carpeta_ni_link: 'No hay carpeta del caso en el Drive ni link en la fila'
+  carpeta_sin_json: 'Carpeta sin JSON',
+  original_sin_acceso: 'Sin acceso al original',
+  original_sin_json: 'Original sin JSON',
+  sin_carpeta_ni_link: 'Sin carpeta ni link'
 };
 
 function indiceUrlArchivo_(id) {
@@ -151,11 +151,16 @@ function indiceQuitarSufijo_(nombre) {
   return String(nombre || '').replace(/(\d)_\d{1,3}$/, '$1');
 }
 
+// Un número de caso tiene al menos estos dígitos; los más cortos en nombres
+// de carpeta son versiones o nombres de productos ("v1.0.1", "WSO2").
+var INDICE_MIN_DIGITOS_CASO = 3;
+
 /**
  * Números de caso que aparecen completos en el nombre de una carpeta. El
- * sufijo de reenvío "_2", "_3" no cuenta como número aparte.
+ * sufijo de reenvío "_2", "_3" no cuenta como número aparte, ni los números
+ * de menos de INDICE_MIN_DIGITOS_CASO dígitos.
  *   "9300" y "9300_2" → 9300;  "caso 9300" y "caso_9300" → 9300;
- *   "19300" → 19300 (no 9300)
+ *   "19300" → 19300 (no 9300);  "v1.0.1" y "WSO2" → ninguno
  */
 function indiceNumerosEnNombre_(nombre) {
   var s = indiceQuitarSufijo_(nombre);
@@ -163,7 +168,7 @@ function indiceNumerosEnNombre_(nombre) {
   var res = [];
   (s.match(/\d+/g) || []).forEach(function(n) {
     var k = indiceNormalizarCaso_(n);
-    if (!k || vistos[k]) return;
+    if (!k || k.length < INDICE_MIN_DIGITOS_CASO || vistos[k]) return;
     vistos[k] = true;
     res.push(k);
   });
@@ -838,7 +843,14 @@ var INDICE_BUSQUEDA = {
   MAX_PARTES: 20,
   // Si Google rechaza programar la parte siguiente por el límite de una vez
   // por hora, se programa para dentro de este tiempo.
-  ESPERA_HORA_MS: 61 * 60 * 1000
+  ESPERA_HORA_MS: 61 * 60 * 1000,
+  // Al dejar lista la parte siguiente mientras corre una, se programa para
+  // este tiempo después del fin previsto de la que corre.
+  MARGEN_ADELANTO_MS: 15000,
+  // Si una parte arranca mientras la anterior todavía corre, espera su turno
+  // hasta este tiempo (el que espera se descuenta de su presupuesto).
+  ESPERA_TURNO_MS: 2 * 60 * 1000,
+  PAUSA_TURNO_MS: 5000
 };
 
 function indiceLeerNota_(sheetId) {
@@ -1320,7 +1332,8 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
 // parte corre en su activador y, al terminar, borra su propio activador y
 // enseguida programa el siguiente si falta (sin crear otro si ya hay uno
 // esperando). Si Google lo rechaza por el límite de una vez por hora, se
-// programa a la hora y la tarjeta ofrece seguir desde el panel.
+// programa a la hora. Abrir el panel o "Ver avance" deja lista la parte
+// siguiente mientras una corre, o reanuda la que quedó a la hora.
 
 /**
  * Deja la nota lista para una búsqueda en el modo pedido. Si ya había una
@@ -1352,6 +1365,7 @@ function indicePrepararBusqueda_(sheetId, modo) {
       };
     }
     nota.activador = null;
+    nota.adelantada = null;
     nota.detener = false;
     // Lo de la parte anterior no aplica a la que se va a programar.
     nota.parteIniciadaEn = null;
@@ -1396,10 +1410,11 @@ function indiceHayActivadorBusqueda_() {
  * Programa la parte siguiente. desde: 'panel de Sheets', 'panel de Gmail' o
  * 'activador' (se anota para
  * saber de qué contexto acepta Google programar). Respeta el cupo de
- * activadores que comparte con reintentos (solo los cuenta).
+ * activadores que comparte con reintentos (solo los cuenta). retrasoMs:
+ * en cuánto arranca (por defecto, en unos segundos).
  * Devuelve el estado anotado en la nota.
  */
-function indiceProgramarBusqueda_(sheetId, desde) {
+function indiceProgramarBusqueda_(sheetId, desde, retrasoMs) {
   var activador;
   // Desde el panel (acción del usuario) se reemplaza el que haya, por
   // ejemplo uno programado a la hora; desde un activador no se crea otro.
@@ -1424,7 +1439,7 @@ function indiceProgramarBusqueda_(sheetId, desde) {
   } else {
     try {
       ScriptApp.newTrigger(INDICE_BUSQUEDA.HANDLER).timeBased()
-        .after(REINTENTOS_CONFIG.DELAY_TRIGGER_MS).create();
+        .after(retrasoMs || REINTENTOS_CONFIG.DELAY_TRIGGER_MS).create();
       activador = { estado: 'programado', desde: desde, en: Date.now() };
     } catch (err) {
       var detalle = String(err.message || err).substring(0, 200);
@@ -1491,6 +1506,25 @@ function indiceBorrarActivadorActual_(e) {
 }
 
 /**
+ * Si la parte anterior todavía corre (la siguiente se dejó lista desde el
+ * panel y Google la disparó antes), espera a que termine. Devuelve los ms
+ * esperados.
+ */
+function indiceEsperarTurno_(sheetId) {
+  var inicio = Date.now();
+  while (Date.now() - inicio < INDICE_BUSQUEDA.ESPERA_TURNO_MS) {
+    var nota = indiceLeerNota_(sheetId);
+    if (!nota || !(nota.ocupadoHasta > Date.now()) || indiceParteCortada_(nota, Date.now())) break;
+    Utilities.sleep(INDICE_BUSQUEDA.PAUSA_TURNO_MS);
+  }
+  var esperado = Date.now() - inicio;
+  if (esperado >= INDICE_BUSQUEDA.PAUSA_TURNO_MS) {
+    console.log('[Indice] Esperó ' + Math.round(esperado / 1000) + ' s a que terminara la parte anterior');
+  }
+  return esperado;
+}
+
+/**
  * Handler del activador de la búsqueda: hace una parte y, como en los
  * reintentos, al final borra su propio activador y programa el siguiente.
  */
@@ -1506,10 +1540,12 @@ function continuarBusquedaJson(e) {
 
   console.log('[Indice] Búsqueda iniciada desde ' + (nota.iniciadoDesde || '(sin dato)') +
     ', parte ' + ((nota.partes || 0) + 1));
+  var esperado = indiceEsperarTurno_(sheetId);
+  nota = indiceLeerNota_(sheetId) || nota;
   var progresoAntes = nota.progreso || 0;
   var res;
   try {
-    res = indiceCorrerBusqueda_(sheetId, INDICE_BUSQUEDA.PRESUPUESTO_MS, nota.modo);
+    res = indiceCorrerBusqueda_(sheetId, INDICE_BUSQUEDA.PRESUPUESTO_MS - esperado, nota.modo);
   } catch (err) {
     console.error('[Indice] ' + err.message);
     res = { nota: indiceActualizarNota_(sheetId, { ultimoError: String(err.message || err).substring(0, 300) }) };
@@ -1654,8 +1690,8 @@ function buildBusquedaJsonCard_() {
     if (!act) {
       texto = '⏸️ <b>En pausa.</b> Presiona "Continuar" para seguir.';
     } else if (act.estado === 'a_la_hora') {
-      texto = '⏱️ <b>La parte ' + (nota.partes + 1) + ' quedó para las ' + formatearHoraIndice_(act.en) +
-        '</b> (Google no dejó programarla antes). Para seguir ya, presiona "Continuar".';
+      texto = '⏳ <b>Buscando.</b> Presiona "Ver avance" para seguir el progreso.';
+      ofrecerContinuar = false;
     } else if (act.estado === 'programado' || act.estado === 'ya_hay_uno') {
       if (ahora - act.en < INDICE_CONFIG.ESPERA_ACTIVADOR_MS) {
         texto = '⏱️ <b>La parte ' + (nota.partes + 1) + ' arranca sola en unos segundos.</b>';
@@ -1669,7 +1705,7 @@ function buildBusquedaJsonCard_() {
     }
     parrafo(texto + '<br>' + avance);
     if (ofrecerContinuar) boton('Continuar', 'onContinuarBusquedaJson', true);
-    boton('Ver avance', 'onVerAvanceBusquedaJson', false);
+    boton('Ver avance', 'onVerAvanceBusquedaJson', !ofrecerContinuar);
     boton('Detener', 'onDetenerBusquedaJson', false);
   } else if (nota.etapa === 'detenido') {
     parrafo(rojo('⚠️ <b>La búsqueda se detuvo.</b> ' + escaparHtml(nota.ultimoError || '')) + '<br>' + avance +
@@ -1749,9 +1785,7 @@ function indiceRespuestaBusqueda_(aviso) {
 
 function indiceTextoActivador_(act) {
   if (act.estado === 'programado' || act.estado === 'ya_hay_uno') return 'Arranca sola en unos segundos.';
-  if (act.estado === 'a_la_hora') {
-    return 'Google no dejó programarla antes: quedó para las ' + formatearHoraIndice_(act.en) + '.';
-  }
+  if (act.estado === 'a_la_hora') return 'Presiona "Ver avance" para seguir el progreso.';
   return 'No se pudo programar: ' + (act.detalle || act.estado);
 }
 
@@ -1821,16 +1855,62 @@ function indiceDebeReanudar_(nota, ahora) {
 }
 
 /**
- * Si la búsqueda está esperando, la reanuda programando la parte siguiente
- * desde esta acción del usuario (abrir el panel o "Ver avance"). Devuelve
- * el activador programado o null si no hacía falta.
+ * ¿Conviene dejar lista ya la parte siguiente? (solo calcula) Sí cuando hay
+ * una parte corriendo, nadie pidió detener y todavía no se dejó lista la
+ * siguiente para esta parte. Desde una acción del usuario Google acepta
+ * programarla; desde el activador, al terminar, la deja para la hora.
+ */
+function indiceDebeAdelantar_(nota, ahora) {
+  if (!nota || nota.etapa !== 'buscando' || nota.detener) return false;
+  if (!(nota.ocupadoHasta > ahora) || indiceParteCortada_(nota, ahora)) return false;
+  return !(nota.adelantada && nota.adelantada.parte === nota.partes);
+}
+
+/**
+ * En cuántos ms programar la parte siguiente para que arranque poco después
+ * del fin previsto de la que corre.
+ */
+function indiceRetrasoAdelanto_(nota, ahora) {
+  var fin = (nota.parteIniciadaEn || ahora) + INDICE_BUSQUEDA.PRESUPUESTO_MS + INDICE_BUSQUEDA.MARGEN_ADELANTO_MS;
+  return Math.max(REINTENTOS_CONFIG.DELAY_TRIGGER_MS, fin - ahora);
+}
+
+/**
+ * Desde una acción del usuario (abrir el panel o "Ver avance"):
+ * - si hay una parte corriendo, deja lista la siguiente para cuando termine;
+ * - si la búsqueda está esperando, la reanuda programando la parte siguiente.
+ * Devuelve el activador programado al reanudar, o null si no hacía falta o
+ * solo se dejó lista la siguiente.
  */
 function indiceReanudarSiHaceFalta_(host) {
   try {
     var sheetId = obtenerSheetId();
     if (!sheetId) return null;
     var nota = indiceLeerNota_(sheetId);
-    if (!indiceDebeReanudar_(nota, Date.now())) return null;
+    var ahora = Date.now();
+    if (indiceDebeAdelantar_(nota, ahora)) {
+      PropertiesService.getUserProperties().setProperty('INDICE_SHEET_ID', sheetId);
+      var retraso = indiceRetrasoAdelanto_(nota, ahora);
+      var adelantado = indiceProgramarBusqueda_(sheetId, 'panel de ' + host, retraso);
+      if (adelantado.estado === 'programado') {
+        indiceActualizarNota_(sheetId, { adelantada: { parte: nota.partes, en: ahora + retraso } });
+        console.log('[Indice] Parte ' + (nota.partes + 1) + ' lista desde el panel de ' + host +
+          ': arranca en ' + Math.round(retraso / 1000) + ' s');
+      } else {
+        // No se pudo: se deshace (la parte que corre programará la siguiente
+        // al terminar, como siempre) y no se vuelve a intentar en esta parte.
+        ScriptApp.getProjectTriggers().forEach(function(t) {
+          if (t.getHandlerFunction() === INDICE_BUSQUEDA.HANDLER) ScriptApp.deleteTrigger(t);
+        });
+        indiceActualizarNota_(sheetId, {
+          activador: nota.activador || null,
+          adelantada: { parte: nota.partes, fallo: adelantado.estado }
+        });
+        console.log('[Indice] No se pudo dejar lista la parte siguiente: ' + adelantado.estado);
+      }
+      return null;
+    }
+    if (!indiceDebeReanudar_(nota, ahora)) return null;
     PropertiesService.getUserProperties().setProperty('INDICE_SHEET_ID', sheetId);
     var prep = indicePrepararBusqueda_(sheetId, nota.modo);
     if (prep.ocupado) return null;
@@ -1971,12 +2051,13 @@ function onAbrirBusquedaJson(e) {
 }
 
 /**
- * "Ver avance": refresca la tarjeta y, si la búsqueda estaba esperando (a
- * la hora, sin arrancar o cortada), la reanuda desde esta acción.
+ * "Ver avance": refresca la tarjeta y, sin avisar, deja lista la parte
+ * siguiente si una corre, o reanuda la búsqueda si estaba esperando (a la
+ * hora, sin arrancar o cortada).
  */
 function onVerAvanceBusquedaJson(e) {
-  var act = indiceReanudarSiHaceFalta_(indiceHost_(e));
-  return indiceRespuestaBusqueda_(act ? 'Se reanudó la búsqueda. ' + indiceTextoActivador_(act) : null);
+  indiceReanudarSiHaceFalta_(indiceHost_(e));
+  return indiceRespuestaBusqueda_(null);
 }
 
 function onBuscarJson(e) {
