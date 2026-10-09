@@ -27,8 +27,10 @@ var INDICE_CONFIG = {
   ESPERA_ACTIVADOR_MS: 90000,
   // Leer todas las carpetas y archivos de la unidad de la raíz (compartida o
   // Mi unidad) con pocas consultas en vez de una consulta por carpeta. En
-  // false se usa siempre el recorrido carpeta por carpeta.
-  LEER_RAIZ_DE_UNA_VEZ: true
+  // false se usa siempre el recorrido carpeta por carpeta. Apagado hasta
+  // confirmar dónde está la raíz real: en Mi unidad lista todo el Drive de
+  // quien busca, no solo la raíz.
+  LEER_RAIZ_DE_UNA_VEZ: false
 };
 
 // ── Utilidades ────────────────────────────────────────────────────────

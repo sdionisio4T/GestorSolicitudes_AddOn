@@ -143,6 +143,7 @@ test('raiz leida de una vez da lo mismo que carpeta por carpeta (Drive falso)', 
   } };
   const orden = (a) => ({ carpetas: a.carpetas, jsons: [...a.jsons].sort((x, y) => x[0].localeCompare(y[0])) });
   const sinLimite = () => 60000;
+  const interruptor = gs.INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ;
   try {
     gs.INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ = false;
     const lento = plano(gs.indiceRecorrerRaiz_(R, sinLimite, null, null));
@@ -160,7 +161,7 @@ test('raiz leida de una vez da lo mismo que carpeta por carpeta (Drive falso)', 
     assert.deepStrictEqual(orden(miUnidad), orden(lento));
     assert.deepStrictEqual(corporas.slice(-2), ['user', 'user']);
   } finally {
-    gs.INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ = true;
+    gs.INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ = interruptor;
   }
 });
 
