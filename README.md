@@ -13,6 +13,7 @@ Google Workspace Add-on (Gmail + Sheets) que automatiza el registro de solicitud
 - **Copia de archivos en Drive** con estructura de carpetas por servicio, caso y APIM, con reintentos automáticos en segundo plano si algo falla.
 - **Panel de envíos** para consultar el estado de solicitudes en curso (desde Gmail o Sheets).
 - **Editor de solicitudes** para modificar envíos ya guardados sin duplicar filas ni re-copiar archivos. Incluye solo envíos en estado PENDIENTE de los últimos 30 días. Los APROBADOS o NO APROBADOS se consideran cerrados y no aparecen en el listado (pero sí siguen apareciendo como aviso en la card "Caso ya registrado" al detectar un correo, para evitar duplicados). Al pasar el estado a APROBADO se borran las observaciones automáticamente.
+- **JSON de las solicitudes** (desde el panel del Sheet): busca los `.json` de cada fila por número de caso y deja los links en la columna N o, si no hay, el motivo. Ver la sección [JSON de las solicitudes](#json-de-las-solicitudes).
 
 ## Estructura del proyecto
 
@@ -33,6 +34,7 @@ Todo el código del add-on vive en `src/`. Los archivos `.gs` de Apps Script com
 | `src/Reintentos.gs` | Reintentos en segundo plano vía triggers programados. |
 | `src/EstadoCard.gs` | Tarjeta de estado de envíos y lista de envíos abiertos. |
 | `src/EditarSolicitud.gs` | Editor de solicitudes ya guardadas (in-place, sin duplicar filas). |
+| `src/IndiceJson.gs` | Búsqueda de JSON de las solicitudes desde el panel del Sheet: columnas N y O, pestaña "JSON sin fila", trabajo por partes con activadores. |
 | `src/Tests.gs` | Tests unitarios de helpers puros (regex, columnas, parsing). Corren en Apps Script (`correrTodosLosTests`) y en Node (`npm test`). |
 | `src/Integracion.gs` | Prueba de integración real del envío (`correrIntegracion`) contra un Sheet y una carpeta de prueba. Se corre a mano en Apps Script. |
 | `src/appsscript.template.json` | Plantilla del manifiesto del add-on: scopes OAuth, triggers, dominios permitidos, y una URL de logo por defecto (gstatic Gmail). Está en git y es la fuente de verdad. |
@@ -128,6 +130,76 @@ Reglas:
 - `APIM/` y `<Servicio>/` se reutilizan si ya existen; nunca se duplican.
 - La carpeta `<Caso>` es única por envío: si ya existía, se crea con sufijo `_2`, `_3`, etc.
 - Cuando un envío mezcla componentes API/APIM con otros, los mismos archivos se copian a ambas rutas, y cada fila del Sheet apunta a la carpeta que le corresponde por componente.
+
+## JSON de las solicitudes
+
+En el panel del add-on en el Sheet, la sección **"🗂️ JSON de las solicitudes"** abre una tarjeta que busca los `.json` de cada fila y los anota en el propio Sheet. La función es solo del Sheet; no aparece en Gmail.
+
+### Qué escribe
+
+| Dónde | Qué |
+|---|---|
+| Columna N | Los links a los `.json` de la fila, uno por línea. Si no hay, el motivo. |
+| Columna O ("Carpeta copiada") | El link a la carpeta copiada de la fila, cuando la columna C no enlaza ya una carpeta de la raíz. |
+| Pestaña "JSON sin fila" | Los `.json` de la raíz que ninguna fila usa, con su ruta y el porqué. Se reescribe al terminar cada búsqueda completa. |
+
+Motivos posibles en la columna N:
+
+| Motivo | Significa |
+|---|---|
+| `Carpeta sin JSON` | El caso tiene carpeta en la raíz, pero sin `.json`. |
+| `Sin acceso al original` | El link original de la fila no se puede abrir (sin permiso o borrado). |
+| `Original sin JSON` | El original se pudo abrir y no tiene `.json`. |
+| `Sin carpeta ni link` | No hay carpeta del caso en la raíz ni link en la fila. |
+
+Cualquier línea de la columna N que no sea una URL se toma como motivo. Las celdas que ya tienen links nunca se modifican: pueden venir de los envíos.
+
+### Cómo busca
+
+- **La clave es el número de caso.** Para cada fila se juntan los `.json` de todas las carpetas de la raíz cuyo nombre contiene el número de caso completo, en cualquier rama. El sufijo de reenvío no cuenta (`9300_2` es el caso 9300) y solo se toman números de 3 dígitos o más, para no confundir versiones o nombres de productos (`v1.0.1`, `WSO2`) con casos.
+- **Archivos repetidos:** mismo nombre y mismo contenido (md5) dejan un solo link; mismo nombre con contenido distinto deja los dos.
+- **Si el caso no tiene carpeta en la raíz**, se abren los links de las columnas C y D de esa fila (la copia con otro nombre o la carpeta original) y se busca ahí.
+- **Qué lee de Drive:** solo la carpeta raíz configurada, una carpeta por consulta, y las carpetas enlazadas en las columnas C y D. No recorre el resto del Drive de quien busca.
+
+### Botones
+
+| Botón | Qué hace |
+|---|---|
+| Buscar JSON | Trabaja las filas con la columna N vacía (las solicitudes nuevas). |
+| Revisar avisos | Vuelve a buscar las filas que tienen solo un motivo, por si ya subieron el JSON o dieron el permiso. |
+| Ver avance | Refresca la tarjeta y deja lista la parte siguiente (ver abajo). |
+| Continuar | Sigue una búsqueda que quedó a medias. |
+| Detener | Para la búsqueda; lo ya escrito se conserva. |
+| Empezar de cero | Borra el avance, la columna O, la pestaña "JSON sin fila" y los motivos de la columna N. Los links de la columna N se conservan. |
+
+### Trabajo por partes
+
+Una ejecución de Apps Script dura como máximo 6 minutos, así que la búsqueda corre en segundo plano por partes de hasta 4,5 minutos. Cada parte sigue en la primera fila con la columna N vacía, por lo que el avance es la propia columna.
+
+Google no permite que un activador de un complemento de editor programe al siguiente antes de una hora, pero sí lo permite desde una acción del usuario. Por eso:
+
+- Al presionar **"Ver avance"** o abrir el panel mientras corre una parte, la siguiente queda programada para cuando esa termine. Basta una vez, en cualquier momento.
+- Si nadie presiona nada, la parte siguiente arranca sola a la hora.
+
+Como referencia, con unas 600 filas y una raíz de unas 750 carpetas una búsqueda completa toma 2 o 3 partes, según la velocidad de respuesta de Drive. Las búsquedas siguientes solo revisan las filas nuevas.
+
+### Dónde se guarda el estado
+
+- **Mapa de la raíz:** en la caché del script (`CacheService`), solo mientras dura una búsqueda, para que la parte siguiente no vuelva a leer Drive. Se borra al terminar, al detener o al empezar de cero; como respaldo, vence a las 6 horas.
+- **Nota de la búsqueda:** en las propiedades del script, una por Sheet (por su ID): modo, parte, contadores y fecha de término. De ahí sale el resumen de la tarjeta.
+
+Si se copian las columnas N y O a otro Sheet, la búsqueda las reconoce igual, pero ese Sheet no hereda la nota: la tarjeta se verá como si nunca se hubiera buscado hasta correr "Buscar JSON" una vez.
+
+### Lectura de la raíz de una vez (apagada)
+
+`INDICE_CONFIG.LEER_RAIZ_DE_UNA_VEZ` en `src/IndiceJson.gs` cambia la forma de leer la raíz:
+
+| Valor | Cómo lee | Alcance |
+|---|---|---|
+| `false` (por defecto) | Una consulta por carpeta, desde la raíz hacia abajo. | Solo la carpeta raíz. |
+| `true` | Dos listados de toda la unidad (carpetas y archivos) y filtra en memoria lo que cuelga de la raíz. Más rápido. | Unidad compartida: solo esa unidad. Mi unidad: **todo el Drive de quien busca**, incluido lo compartido con esa persona (solo nombres e IDs, sin contenido). |
+
+Encenderla solo tiene sentido si la raíz está en una unidad compartida. El registro de cada parte indica qué forma se usó ("leída de una vez" o "Raíz leída carpeta por carpeta").
 
 ## Instalación
 
@@ -496,7 +568,7 @@ Hay tres niveles:
    npm test
    ```
 
-   Incluyen los tests de `src/Tests.gs` y los correos de ejemplo de `tests/fixtures/`. Para agregar un correo: guardar el cuerpo en `tests/fixtures/<nombre>.txt` y en `tests/fixtures/<nombre>.json` el asunto y los valores esperados (ver los existentes). Los correos van anonimizados.
+   Incluyen los tests de `src/Tests.gs`, los de la búsqueda de JSON (`tests/indice-json.test.js`) y los correos de ejemplo de `tests/fixtures/`. Para agregar un correo: guardar el cuerpo en `tests/fixtures/<nombre>.txt` y en `tests/fixtures/<nombre>.json` el asunto y los valores esperados (ver los existentes). Los correos van anonimizados.
 
 2. **Integración real** (a mano, en Apps Script): `correrIntegracion()` en `src/Integracion.gs` hace un envío mixto ESB + API contra recursos de prueba, revisa filas, carpetas, copias y la columna de JSON, y al final borra lo que creó. Requiere en Propiedades del script: `TEST_SHEET_ID`, `TEST_SHEET_TAB`, `TEST_CARPETA_ID` (destino de las copias) y `TEST_ORIGEN_URL` (una carpeta pequeña con al menos un `.json`, fuera de `TEST_CARPETA_ID`). Correrla después de cada cambio en el envío o la copia.
 
