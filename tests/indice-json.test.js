@@ -385,6 +385,48 @@ test('eleccion de filas: normal toma N vacias y mixtas; revisar toma solo motivo
     [[2, true, false, false], [3, false, false, true], [4, false, true, false]]);
   assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'revisar', 6, carpetaDe)),
     [[3, false, false, true], [4, false, true, false], [6, true, false, false]]);
+  // Por filas: solo el rango; vacias y con motivo se buscan, con links no.
+  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'rango', 2, carpetaDe, { desde: 2, hasta: 5 })),
+    [[2, true, false, false], [3, false, false, true], [4, false, true, false], [5, true, false, false]]);
+  // Al seguir en otra parte, no repite las que ya paso.
+  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'rango', 6, carpetaDe, { desde: 5, hasta: 7 })),
+    [[6, true, false, false]]);
+  // Una sola fila con links: nada que hacer.
+  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'rango', 7, carpetaDe, { desde: 7, hasta: 7 })), []);
+  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'rango', 0, carpetaDe, null)), []);
+});
+
+test('buscar en filas: lectura de "Desde fila" y "Hasta fila"', () => {
+  const r = (d, h) => plano(gs.indiceLeerRango_(d, h));
+  assert.deepStrictEqual(r('120', '135'), { desde: 120, hasta: 135 });
+  assert.deepStrictEqual(r(' 120 ', ''), { desde: 120, hasta: 120 });
+  assert.ok(r('', '135').error);
+  assert.ok(r('abc', '').error);
+  assert.ok(r('12', '1.5').error);
+  assert.ok(r('1', '').error);
+  assert.ok(r('135', '120').error);
+  assert.strictEqual(gs.indiceTextoRango_({ desde: 120, hasta: 135 }), 'filas 120 a 135');
+  assert.strictEqual(gs.indiceTextoRango_({ desde: 120, hasta: 120 }), 'fila 120');
+  assert.strictEqual(gs.indiceNombreBusqueda_({ modo: 'rango', rango: { desde: 120, hasta: 135 } }), 'Buscar en filas 120 a 135');
+  assert.strictEqual(gs.indiceNombreBusqueda_({ modo: 'revisar' }), 'Revisar avisos');
+});
+
+test('buscar en filas: siempre empieza una busqueda nueva y se retoma con su rango', () => {
+  const props = {};
+  gs.PropertiesService = { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; } }) };
+  gs.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
+  // Habia una busqueda por filas detenida, con otro rango.
+  props.INDICE_NOTA_X = JSON.stringify({ modo: 'rango', etapa: 'detenido', partes: 2, fila: 40, rango: { desde: 10, hasta: 90 }, cuenta: { links: 5 } });
+  const nueva = plano(gs.indicePrepararBusqueda_('X', 'rango', { desde: 120, hasta: 135 })).nota;
+  assert.deepStrictEqual(nueva.rango, { desde: 120, hasta: 135 });
+  assert.strictEqual(nueva.fila, 120);
+  assert.strictEqual(nueva.partes, 0);
+  assert.deepStrictEqual(nueva.cuenta, {});
+  // "Continuar" (sin rango): sigue la misma, con su rango y su avance.
+  props.INDICE_NOTA_X = JSON.stringify({ ...nueva, fila: 128 });
+  const sigue = plano(gs.indicePrepararBusqueda_('X', 'rango')).nota;
+  assert.deepStrictEqual(sigue.rango, { desde: 120, hasta: 135 });
+  assert.strictEqual(sigue.fila, 128);
 });
 
 test('JSON sin fila: caso que no esta en el Sheet, carpeta sin numero, y lo enlazado no entra', () => {

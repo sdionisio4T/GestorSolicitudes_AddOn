@@ -167,6 +167,7 @@ Cualquier línea de la columna N que no sea una URL se toma como motivo. Las cel
 |---|---|
 | Buscar JSON | Trabaja las filas con la columna N vacía (las solicitudes nuevas). |
 | Revisar avisos | Vuelve a buscar las filas que tienen solo un motivo, por si ya subieron el JSON o dieron el permiso. |
+| Buscar en filas | Con "Desde fila" y "Hasta fila": trabaja solo esas filas, las que tienen la columna N vacía o con motivo. Para una sola fila, "Hasta fila" queda vacío. No reescribe la pestaña "JSON sin fila". |
 | Ver avance | Refresca la tarjeta y deja lista la parte siguiente (ver abajo). |
 | Continuar | Sigue una búsqueda que quedó a medias. |
 | Detener | Para la búsqueda; lo ya escrito se conserva. |
