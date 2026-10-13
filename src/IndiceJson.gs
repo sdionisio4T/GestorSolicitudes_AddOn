@@ -12,8 +12,8 @@
  * originales de otras personas (una carpeta por consulta: la consulta
  * agrupada por padres pierde archivos sin avisar en carpetas de otros).
  *
- * Trabaja por partes con un activador .after(), como los reintentos. El
- * avance es la propia columna N: cada parte sigue en la primera N vacía.
+ * Trabaja por partes con un activador .after(), como los reintentos. Cada
+ * parte sigue en la fila donde quedó la anterior (anotada en la nota).
  * Solo se guarda una nota corta por Sheet en las propiedades del proyecto.
  * La columna C, el envío y los reintentos no se tocan.
  */
@@ -25,6 +25,8 @@ var INDICE_CONFIG = {
   BLOQUE_N: 40,
   // Si la parte programada no arrancó en este tiempo, la tarjeta lo avisa.
   ESPERA_ACTIVADOR_MS: 90000,
+  // Cuánto se muestra en la tarjeta el resultado de una búsqueda terminada.
+  RESUMEN_VIGENTE_MS: 24 * 60 * 60 * 1000,
   // Leer todas las carpetas y archivos de la unidad de la raíz (compartida o
   // Mi unidad) con pocas consultas en vez de una consulta por carpeta. En
   // false se usa siempre el recorrido carpeta por carpeta. Apagado hasta
@@ -829,11 +831,11 @@ function indiceEscribirSinFila_(ss, lista) {
 // ── Búsqueda por filas ────────────────────────────────────────────────
 //
 // Una ejecución recorre la raíz (en memoria), lee el Sheet y resuelve las
-// filas de arriba hacia abajo, escribiendo cada bloque. El avance es la
-// propia columna N: la siguiente ejecución empieza en la primera N vacía.
+// filas de arriba hacia abajo, escribiendo cada bloque. La siguiente
+// ejecución sigue desde la fila anotada.
 // Lo único que se guarda es una nota corta por Sheet en las propiedades del
 // proyecto (compartidas por todos los usuarios, no se ven en el Sheet ni en
-// Drive): turno, modo, fila para "revisar avisos" y contadores.
+// Drive): turno, modo, fila donde va y contadores.
 
 var INDICE_BUSQUEDA = {
   PREFIJO_NOTA: 'INDICE_NOTA_',
@@ -999,22 +1001,19 @@ function indiceLeerFilasCompletas_(hoja, desde, hasta) {
 
 /**
  * Qué filas trabajar, de arriba hacia abajo:
- *   normal: N vacía (buscar) o mixta, con links y motivo (limpiar).
- *   revisar: N con solo motivo, desde la fila indicada.
- * Además, cualquier fila con la O vacía cuya carpeta se encontró (no
- * necesita Drive). Devuelve [{ fila, necesitaN, soloCarpeta, ... }].
+ *   - N sin links (vacía o con solo motivo), desde la fila indicada: se
+ *     busca. El texto del motivo no se interpreta. Como una fila puede
+ *     quedar otra vez con motivo, el avance es la fila y no la celda.
+ *   - N mixta, con links y motivo: se limpia.
+ *   - O vacía cuya carpeta se encontró (no necesita Drive).
+ * Devuelve [{ fila, necesitaN, soloCarpeta, ... }].
  */
-function indiceElegirFilas_(filas, modo, desdeFila, carpetaDe) {
+function indiceElegirFilas_(filas, desdeFila, carpetaDe) {
   var lista = [];
   filas.forEach(function(f) {
     var celda = indiceAnalizarCeldaN_(f.textoN);
     var mixta = celda.links.length > 0 && celda.motivos.length > 0;
-    var necesitaN;
-    if (modo === 'revisar') {
-      necesitaN = celda.links.length === 0 && celda.motivos.length > 0 && f.fila >= (desdeFila || 0);
-    } else {
-      necesitaN = celda.links.length === 0 && celda.motivos.length === 0;
-    }
+    var necesitaN = celda.links.length === 0 && f.fila >= (desdeFila || 0);
     var carpeta = carpetaDe ? carpetaDe(f) : null;
     var necesitaO = !!(carpeta && carpeta.carpetas.length > 0 && !String(f.textoO).trim());
     if (!necesitaN && !mixta && !necesitaO) return;
@@ -1229,8 +1228,9 @@ function indiceRevisarOriginalesDeFila_(fila, arbol, originales, cuentaO, quedaM
 }
 
 /**
- * Una ejecución de la búsqueda. modo: 'normal' (filas con la N vacía) o
- * 'revisar' (filas con solo motivo, desde la fila guardada en la nota).
+ * Una ejecución de la búsqueda: trabaja las filas sin links en la columna N
+ * (vacías o con motivo), desde la fila guardada en la nota. modo se anota
+ * en la nota; hoy siempre es 'normal'.
  *
  * Devuelve { ocupado, nota } si otra búsqueda tiene el turno, o
  * { terminado, nota, cuenta } al terminar la ejecución.
@@ -1348,7 +1348,7 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
     }
     var ultimoAviso = Date.now();
 
-    var lista = indiceElegirFilas_(filas, modo, nota.fila, function(f) {
+    var lista = indiceElegirFilas_(filas, nota.fila, function(f) {
       return indiceCarpetaDeFila_(f, arbol, directorio);
     });
 
@@ -1359,10 +1359,10 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
     var escribirBloque = function() {
       if (bloque.length === 0) return true;
       for (var intento = 0; intento < INDICE_BUSQUEDA.REINTENTOS_LOCK; intento++) {
-        if (indiceEscribirBloqueFilas_(ss, bloque, cuenta, modo === 'revisar')) {
+        if (indiceEscribirBloqueFilas_(ss, bloque, cuenta, true)) {
           nota.filaActual = bloque[bloque.length - 1].fila;
           nota.progreso = (nota.progreso || 0) + 1;
-          if (modo === 'revisar') nota.fila = nota.filaActual + 1;
+          nota.fila = nota.filaActual + 1;
           bloque = [];
           return true;
         }
@@ -1694,7 +1694,10 @@ function continuarBusquedaJson(e) {
 
 // ── Tarjeta de la búsqueda ────────────────────────────────────────────
 
-var INDICE_NOMBRE_MODO = { normal: 'Buscar JSON', revisar: 'Revisar avisos' };
+// Hoy toda búsqueda completa es 'normal'. 'revisar' y 'rango' quedan por
+// las notas guardadas cuando existían "Revisar avisos" y la búsqueda por
+// filas en segundo plano.
+var INDICE_NOMBRE_MODO = { normal: 'Buscar JSON', revisar: 'Buscar JSON', rango: 'Buscar en filas' };
 
 var INDICE_TEXTO_ESTADO_ACTIVADOR = {
   programado: 'programada',
@@ -1715,7 +1718,7 @@ function indiceTextoCuenta_(cuenta) {
     if (valor) lineas.push(valor + ' ' + texto);
   }
   agregar(c.links, 'fila(s) con JSON');
-  agregar(c.motivo, 'fila(s) con el motivo de por qué no hay JSON');
+  agregar((c.motivo || 0) + (c.mismoMotivo || 0), 'fila(s) con el motivo de por qué no hay JSON');
   agregar(c.limpiada, 'celda(s) limpiadas (tenían un motivo viejo y links)');
   agregar(c.carpetas, 'fila(s) con su carpeta en la columna O');
   agregar(c.cambiaron, 'fila(s) saltadas porque cambiaron mientras corría');
@@ -1727,14 +1730,34 @@ function indiceTextoCuenta_(cuenta) {
 /**
  * Una línea de estado para el menú del panel.
  */
+/**
+ * ¿El resultado de la última búsqueda completa todavía se muestra? (solo
+ * calcula) Sí durante RESUMEN_VIGENTE_MS desde que terminó; después la
+ * tarjeta vuelve al texto de inicio para no dejar un resumen viejo. Las
+ * notas de búsquedas por filas de cuando corrían en segundo plano no se
+ * muestran.
+ */
+function indiceResumenVigente_(nota, ahora) {
+  if (!nota || nota.etapa !== 'terminado' || nota.modo === 'rango') return false;
+  return !!nota.terminadoEn && ahora - nota.terminadoEn < INDICE_CONFIG.RESUMEN_VIGENTE_MS;
+}
+
+/**
+ * ¿La tarjeta no tiene nada que contar de la búsqueda completa? Sin nota, o
+ * con una terminada cuyo resultado ya no se muestra.
+ */
+function indiceSinEstado_(nota, ahora) {
+  return !nota || (nota.etapa === 'terminado' && !indiceResumenVigente_(nota, ahora));
+}
+
 function textoCortoBusquedaJson_() {
   var sheetId = obtenerSheetId();
   var nota = sheetId ? indiceLeerNota_(sheetId) : null;
-  if (!nota) return 'Todavía no se ha buscado.';
+  if (indiceSinEstado_(nota, Date.now())) return 'Busca los JSON de las filas y revisa las que no tienen.';
   var c = nota.cuenta || {};
   if (nota.etapa === 'terminado') {
     return '✅ Última búsqueda: ' + formatearFechaIndice_(nota.terminadoEn) + ' · ' +
-      (c.links || 0) + ' con JSON · ' + (c.motivo || 0) + ' con motivo';
+      (c.links || 0) + ' con JSON · ' + ((c.motivo || 0) + (c.mismoMotivo || 0)) + ' con motivo';
   }
   if (nota.etapa === 'detenido') return '⚠️ La búsqueda se detuvo. Entra para continuar.';
   return '⏳ Buscando: va en la fila ' + (nota.filaActual || 0) + ' de ' + (nota.ultimaFila || '?');
@@ -1779,12 +1802,13 @@ function buildBusquedaJsonCard_() {
       (nota.mapaCarpetas ? '<br>Mapa del Drive: ' + nota.mapaCarpetas + ' carpetas leídas' : '')
     : (nota ? INDICE_NOMBRE_MODO[nota.modo] : '');
 
-  if (!nota) {
-    parrafo('Busca los JSON de cada fila y los escribe en la columna <b>N</b>. Si no hay, escribe el motivo. ' +
+  var sinEstado = indiceSinEstado_(nota, ahora);
+  if (sinEstado) {
+    parrafo('Revisa todo el Sheet: busca los JSON de las filas que no tienen links en la columna <b>N</b> ' +
+      '(vacías o con motivo) y los escribe; si no hay, deja el motivo. Las filas con links no se tocan. ' +
       'En la columna <b>O</b> pone el link a nuestra carpeta copiada cuando la columna C no lo tiene.<br>' +
       '<i>Trabaja solo en segundo plano; el avance se ve en la columna N.</i>');
     boton('Buscar JSON', 'onBuscarJson', true);
-    boton('Revisar avisos', 'onRevisarAvisosJson', false);
   } else if (corriendo) {
     var paso;
     if (nota.detener) {
@@ -1806,7 +1830,7 @@ function buildBusquedaJsonCard_() {
   } else if (nota.etapa === 'buscando' && cortada) {
     parrafo(rojo('⚠️ <b>La parte ' + nota.partes + ' empezó a las ' + formatearHoraIndice_(nota.parteIniciadaEn) +
       ' y no terminó</b>: Google la cortó por tiempo antes de guardar.') +
-      '<br>Presiona "Continuar" para seguir desde la primera N vacía, o "Detener".<br>' + avance);
+      '<br>Presiona "Continuar" para seguir desde donde quedó, o "Detener".<br>' + avance);
     boton('Continuar', 'onContinuarBusquedaJson', true);
     boton('Ver avance', 'onVerAvanceBusquedaJson', false);
     boton('Detener', 'onDetenerBusquedaJson', false);
@@ -1836,27 +1860,19 @@ function buildBusquedaJsonCard_() {
     boton('Detener', 'onDetenerBusquedaJson', false);
   } else if (nota.etapa === 'detenido') {
     parrafo(rojo('⚠️ <b>La búsqueda se detuvo.</b> ' + escaparHtml(nota.ultimoError || '')) + '<br>' + avance +
-      '<br>Lo ya escrito en las columnas N y O se queda. "Continuar" sigue desde la primera N vacía.');
+      '<br>Lo ya escrito en las columnas N y O se queda. "Continuar" sigue desde donde quedó.');
     boton('Continuar', 'onContinuarBusquedaJson', true);
     boton('Ver avance', 'onVerAvanceBusquedaJson', false);
     boton('Buscar JSON', 'onBuscarJson', false);
-    boton('Revisar avisos', 'onRevisarAvisosJson', false);
   } else {
     parrafo('✅ <b>' + INDICE_NOMBRE_MODO[nota.modo] + ' terminó el ' + formatearFechaIndice_(nota.terminadoEn) +
       '</b>, en ' + nota.partes + ' parte' + (nota.partes === 1 ? '' : 's') + '.');
     boton('Buscar JSON', 'onBuscarJson', true);
-    boton('Revisar avisos', 'onRevisarAvisosJson', false);
-    var url = indiceUrlPestanaSinFila_(sheetId);
-    if (url) {
-      botones.addButton(CardService.newTextButton().setText('Abrir "JSON sin fila"')
-        .setOpenLink(CardService.newOpenLink().setUrl(url)));
-    }
   }
 
-  var resumen = nota ? indiceTextoCuenta_(nota.cuenta) : '';
-  if (nota && !corriendo) boton('Empezar de cero', 'onEmpezarDeCeroBusquedaJson', false);
+  var resumen = sinEstado ? '' : indiceTextoCuenta_(nota.cuenta);
   if (resumen) parrafo(resumen);
-  if (nota && nota.ultimoError && nota.etapa !== 'detenido') {
+  if (!sinEstado && nota.ultimoError && nota.etapa !== 'detenido') {
     parrafo(rojo('Último error: ' + escaparHtml(nota.ultimoError)));
   }
   if (nota && !corriendo && nota.etapa !== 'terminado') {
@@ -1890,7 +1906,7 @@ function buildBusquedaJsonCard_() {
       .addWidget(hastaInput)
       .addWidget(CardService.newTextButton().setText('Buscar en filas')
         .setOnClickAction(CardService.newAction().setFunctionName('onBuscarRangoJson')));
-    if (ultimaFilas && ultimaFilas.texto) {
+    if (ultimaFilas && ultimaFilas.texto && ahora - ultimaFilas.en < INDICE_CONFIG.RESUMEN_VIGENTE_MS) {
       seccionFilas.addWidget(CardService.newTextParagraph().setText(
         '<i>Última (' + formatearFechaIndice_(ultimaFilas.en) + '): ' + escaparHtml(ultimaFilas.texto) + '</i>'));
     }
@@ -1923,16 +1939,6 @@ function buildBusquedaJsonCard_() {
             : '')))
   );
   return card.build();
-}
-
-function indiceUrlPestanaSinFila_(sheetId) {
-  try {
-    var ss = SpreadsheetApp.openById(sheetId);
-    var hoja = ss.getSheetByName(INDICE_PESTANA_SIN_FILA);
-    return hoja ? ss.getUrl() + '#gid=' + hoja.getSheetId() : '';
-  } catch (err) {
-    return '';
-  }
 }
 
 function indiceRespuestaBusqueda_(aviso) {
@@ -1976,7 +1982,7 @@ function indiceTextoRango_(rango) {
 // carpetas de cada fila (su ruta [APIM/]Servicio/Caso dentro de la raíz y
 // los links de las columnas C, D y O) y corre en la misma acción del botón.
 // No ve .json de carpetas del caso que estén en otra parte de la raíz sin
-// link en la fila: para eso están "Buscar JSON" y "Revisar avisos".
+// link en la fila: para eso está "Buscar JSON".
 
 var INDICE_FILAS = {
   PREFIJO: 'INDICE_FILAS_',
@@ -2155,8 +2161,8 @@ function indiceTextoResultadoFilas_(rango, res) {
 }
 
 /**
- * "Buscar JSON" y "Revisar avisos": preparan la nota y programan la primera
- * parte. No buscan nada aquí (una acción de tarjeta tiene 30 s).
+ * "Buscar JSON": prepara la nota y programa la primera parte. No busca
+ * nada aquí (una acción de tarjeta tiene 30 s).
  */
 function indiceIniciarDesdePanel_(modo, host) {
   var motivo = motivoConfigInvalida();
@@ -2176,10 +2182,8 @@ function indiceIniciarDesdePanel_(modo, host) {
   // sin recorrer Drive.
   var hoja = SpreadsheetApp.openById(sheetId).getSheetByName(obtenerSheetTab());
   if (!hoja) return 'No existe la pestaña de solicitudes configurada.';
-  if (indiceElegirFilas_(indiceLeerFilasCompletas_(hoja), modo, 0, null).length === 0) {
-    return modo === 'revisar'
-      ? 'No hay filas con aviso para revisar.'
-      : 'No hay filas con la columna N vacía: no hay nada nuevo que buscar.';
+  if (indiceElegirFilas_(indiceLeerFilasCompletas_(hoja), 0, null).length === 0) {
+    return 'Todas las filas ya tienen sus JSON: no hay nada que buscar.';
   }
 
   var prep = indicePrepararBusqueda_(sheetId, modo);
@@ -2286,75 +2290,6 @@ function indiceReanudarSiHaceFalta_(host) {
     console.warn('[Indice] No se pudo reanudar la búsqueda: ' + err.message);
     return null;
   }
-}
-
-/**
- * Filas (índices dentro de los valores dados) cuya celda N tiene solo un
- * motivo, sin links. Son las que escribió la búsqueda; las que tienen
- * links pueden venir de los envíos y no se tocan.
- */
-function indiceFilasConSoloMotivo_(valoresN) {
-  var res = [];
-  valoresN.forEach(function(v, i) {
-    var celda = indiceAnalizarCeldaN_(v[0]);
-    if (celda.links.length === 0 && celda.motivos.length > 0) res.push(i);
-  });
-  return res;
-}
-
-/**
- * "Empezar de cero": deja todo como antes de la primera búsqueda para
- * probar de nuevo. Borra la nota, la caché, los activadores de la búsqueda,
- * la pestaña "JSON sin fila", la columna O y los motivos de la columna N.
- * Los links de la columna N se quedan: pueden venir de los envíos y no hay
- * forma de distinguirlos de los que puso la búsqueda.
- */
-function onEmpezarDeCeroBusquedaJson(e) {
-  var aviso;
-  var lock = LockService.getScriptLock();
-  var conLock = false;
-  try {
-    var sheetId = obtenerSheetId();
-    var nota = indiceLeerNota_(sheetId);
-    if (nota && nota.ocupadoHasta > Date.now() && !indiceParteCortada_(nota, Date.now())) {
-      return indiceRespuestaBusqueda_('Hay una parte corriendo. Presiona "Detener", espera unos segundos y vuelve a intentar.');
-    }
-    conLock = lock.tryLock(10000);
-    if (!conLock) throw new Error('el Sheet está ocupado, intenta en unos segundos.');
-
-    ScriptApp.getProjectTriggers().forEach(function(t) {
-      if (t.getHandlerFunction() === INDICE_BUSQUEDA.HANDLER) ScriptApp.deleteTrigger(t);
-    });
-    indiceBorrarMapa_(sheetId);
-    PropertiesService.getScriptProperties().deleteProperty(INDICE_BUSQUEDA.PREFIJO_NOTA + sheetId);
-    PropertiesService.getScriptProperties().deleteProperty(INDICE_FILAS.PREFIJO + sheetId);
-
-    var ss = SpreadsheetApp.openById(sheetId);
-    var sinFila = ss.getSheetByName(INDICE_PESTANA_SIN_FILA);
-    if (sinFila) ss.deleteSheet(sinFila);
-
-    var hoja = ss.getSheetByName(obtenerSheetTab());
-    var motivosBorrados = 0;
-    if (hoja && hoja.getLastRow() >= 2) {
-      var n = hoja.getLastRow() - 1;
-      hoja.getRange(2, INDICE_COL_CARPETA, n, 1).clearContent();
-      var valoresN = hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, n, 1).getValues();
-      var letraN = columnALetra(SHEET_COLS.ARCHIVOS_JSON);
-      var celdas = indiceFilasConSoloMotivo_(valoresN).map(function(i) { return letraN + (i + 2); });
-      if (celdas.length > 0) hoja.getRangeList(celdas).clearContent();
-      motivosBorrados = celdas.length;
-      SpreadsheetApp.flush();
-    }
-    console.log('[Indice] Empezar de cero: ' + motivosBorrados + ' motivos borrados de la columna N');
-    aviso = 'Listo: se borraron la columna O, ' + motivosBorrados + ' motivo(s) de la columna N, ' +
-      'la pestaña "' + INDICE_PESTANA_SIN_FILA + '" y el avance. Los links de la N se dejaron.';
-  } catch (err) {
-    console.error('[Indice] ' + err.message);
-    aviso = 'No se pudo empezar de cero: ' + err.message;
-  } finally {
-    if (conLock) lock.releaseLock();
-  }
-  return indiceRespuestaBusqueda_(aviso);
 }
 
 /**
@@ -2468,15 +2403,10 @@ function onBuscarRangoJson(e) {
   return indiceRespuestaBusqueda_(aviso);
 }
 
+// Botón "Revisar avisos" de tarjetas abiertas antes de que se uniera con
+// "Buscar JSON": hace lo mismo.
 function onRevisarAvisosJson(e) {
-  var aviso;
-  try {
-    aviso = indiceIniciarDesdePanel_('revisar', indiceHost_(e));
-  } catch (err) {
-    console.error('[Indice] ' + err.message);
-    aviso = 'No se pudo iniciar la revisión: ' + err.message;
-  }
-  return indiceRespuestaBusqueda_(aviso);
+  return onBuscarJson(e);
 }
 
 /**
@@ -2564,9 +2494,15 @@ function onAvanzarAquiIndiceJson(e) {
 }
 
 function onEmpezarDeCeroIndiceJson(e) {
-  return onEmpezarDeCeroBusquedaJson(e);
+  return indiceRespuestaBusqueda_(null);
 }
 
 function onReiniciarIndiceJson(e) {
-  return onEmpezarDeCeroIndiceJson(e);
+  return indiceRespuestaBusqueda_(null);
+}
+
+// Botón "Empezar de cero" de tarjetas abiertas antes de que se quitara:
+// solo refresca la tarjeta.
+function onEmpezarDeCeroBusquedaJson(e) {
+  return indiceRespuestaBusqueda_(null);
 }

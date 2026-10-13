@@ -165,13 +165,11 @@ Cualquier línea de la columna N que no sea una URL se toma como motivo. Las cel
 
 | Botón | Qué hace |
 |---|---|
-| Buscar JSON | Trabaja las filas con la columna N vacía (las solicitudes nuevas). |
-| Revisar avisos | Vuelve a buscar las filas que tienen solo un motivo, por si ya subieron el JSON o dieron el permiso. |
+| Buscar JSON | Revisa todo el Sheet: trabaja las filas sin links en la columna N, tanto las vacías como las que tienen un motivo (por si ya subieron el JSON o dieron el permiso). El texto del motivo no se interpreta: solo importa si la celda tiene links o no. |
 | Buscar en filas | Con "Desde fila" y "Hasta fila": revisa al momento solo esas filas (ver [Búsqueda por filas](#búsqueda-por-filas)). |
 | Ver avance | Refresca la tarjeta y deja lista la parte siguiente (ver abajo). |
 | Continuar | Sigue una búsqueda que quedó a medias. |
 | Detener | Para la búsqueda; lo ya escrito se conserva. |
-| Empezar de cero | Borra el avance, la columna O, la pestaña "JSON sin fila" y los motivos de la columna N. Los links de la columna N se conservan. |
 
 ### Búsqueda por filas
 
@@ -188,25 +186,25 @@ Reglas:
 - Tiene unos 15 segundos para consultar Drive (una acción de tarjeta dura 30). Si el rango no alcanza, escribe lo que hizo, avisa desde qué fila falta y deja las casillas listas para presionar otra vez.
 - No reescribe la pestaña "JSON sin fila" ni usa la nota de la búsqueda completa.
 
-Diferencia con la búsqueda completa: esta no ve un `.json` que esté en una carpeta del caso fuera de su ruta normal y sin link en la fila. Para eso están "Buscar JSON" y "Revisar avisos".
+Diferencia con la búsqueda completa: esta no ve un `.json` que esté en una carpeta del caso fuera de su ruta normal y sin link en la fila. Para eso está "Buscar JSON".
 
 ### Trabajo por partes
 
-Una ejecución de Apps Script dura como máximo 6 minutos, así que la búsqueda corre en segundo plano por partes de hasta 4,5 minutos. Cada parte sigue en la primera fila con la columna N vacía, por lo que el avance es la propia columna.
+Una ejecución de Apps Script dura como máximo 6 minutos, así que la búsqueda corre en segundo plano por partes de hasta 4,5 minutos. Cada parte sigue en la fila donde quedó la anterior.
 
 Google no permite que un activador de un complemento de editor programe al siguiente antes de una hora, pero sí lo permite desde una acción del usuario. Por eso:
 
 - Al presionar **"Ver avance"** o abrir el panel mientras corre una parte, la siguiente queda programada para cuando esa termine. Basta una vez, en cualquier momento.
 - Si nadie presiona nada, la parte siguiente arranca sola a la hora.
 
-Como referencia, con unas 600 filas y una raíz de unas 750 carpetas una búsqueda completa toma 2 o 3 partes, según la velocidad de respuesta de Drive. Las búsquedas siguientes solo revisan las filas nuevas.
+Como referencia, con unas 600 filas y una raíz de unas 750 carpetas una búsqueda completa toma 2 o 3 partes, según la velocidad de respuesta de Drive.
 
 ### Dónde se guarda el estado
 
-- **Mapa de la raíz:** en la caché del script (`CacheService`), solo mientras dura una búsqueda, para que la parte siguiente no vuelva a leer Drive. Se borra al terminar, al detener o al empezar de cero; como respaldo, vence a las 6 horas.
-- **Nota de la búsqueda:** en las propiedades del script, una por Sheet (por su ID): modo, parte, contadores y fecha de término. De ahí sale el resumen de la tarjeta.
+- **Mapa de la raíz:** en la caché del script (`CacheService`), solo mientras dura una búsqueda, para que la parte siguiente no vuelva a leer Drive. Se borra al terminar o al detener; como respaldo, vence a las 6 horas.
+- **Nota de la búsqueda:** en las propiedades del script, una por Sheet (por su ID): parte, fila donde va, contadores y fecha de término. De ahí sale el resumen de la tarjeta, que se muestra durante 24 horas después de terminar; luego la tarjeta vuelve al texto de inicio.
 
-Si se copian las columnas N y O a otro Sheet, la búsqueda las reconoce igual, pero ese Sheet no hereda la nota: la tarjeta se verá como si nunca se hubiera buscado hasta correr "Buscar JSON" una vez.
+Si se copian las columnas N y O a otro Sheet, la búsqueda las reconoce igual, pero ese Sheet no hereda la nota: la tarjeta se verá como si nunca se hubiera buscado.
 
 ### Lectura de la raíz de una vez (apagada)
 

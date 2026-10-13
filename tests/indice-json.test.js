@@ -381,9 +381,11 @@ test('eleccion de filas: normal toma N vacias y mixtas; revisar toma solo motivo
     : { por: null, carpetas: [] });
   const resumen = (lista) => plano(lista.map((f) => [f.fila, f.necesitaN, f.limpiar, f.soloCarpeta]));
 
-  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'normal', 0, carpetaDe)),
-    [[2, true, false, false], [3, false, false, true], [4, false, true, false]]);
-  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'revisar', 6, carpetaDe)),
+  // Sin links (vacia o con motivo) se busca; con links no; la mixta se limpia.
+  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 0, carpetaDe)),
+    [[2, true, false, false], [3, false, false, true], [4, false, true, false], [5, true, false, false], [6, true, false, false]]);
+  // Al seguir en otra parte no repite las filas que ya paso.
+  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 6, carpetaDe)),
     [[3, false, false, true], [4, false, true, false], [6, true, false, false]]);
 });
 
@@ -692,9 +694,19 @@ test('esperar turno: una parte que arranca antes espera a que termine la anterio
   }
 });
 
-test('empezar de cero: en la N solo se borran las celdas con motivo, nunca las que tienen links', () => {
-  const valores = [[''], ['https://a'], ['El original no tiene JSON'], ['Sin acceso al original o fue borrado; pedir permiso\nhttps://b'], ['No hay carpeta del caso en el Drive ni link en la fila']];
-  assert.deepStrictEqual(plano(gs.indiceFilasConSoloMotivo_(valores)), [2, 4]);
+test('resumen de la tarjeta: el resultado de una busqueda terminada se muestra 24 horas', () => {
+  const ahora = 1000 * 60 * 60 * 1000;
+  const hora = 60 * 60 * 1000;
+  const sinEstado = (nota) => gs.indiceSinEstado_(nota, ahora);
+  assert.strictEqual(sinEstado(null), true);
+  // Terminada hace poco: se muestra. Hace mas de un dia: vuelve al texto de inicio.
+  assert.strictEqual(sinEstado({ etapa: 'terminado', modo: 'normal', terminadoEn: ahora - 2 * hora }), false);
+  assert.strictEqual(sinEstado({ etapa: 'terminado', modo: 'revisar', terminadoEn: ahora - 25 * hora }), true);
+  // Nota de una busqueda por filas de la version anterior: no se muestra.
+  assert.strictEqual(sinEstado({ etapa: 'terminado', modo: 'rango', terminadoEn: ahora - hora }), true);
+  // En curso o detenida: siempre se muestra, por vieja que sea.
+  assert.strictEqual(sinEstado({ etapa: 'buscando', modo: 'normal' }), false);
+  assert.strictEqual(sinEstado({ etapa: 'detenido', modo: 'normal' }), false);
 });
 
 test('desde donde se presiono un boton: Gmail o Sheets', () => {
