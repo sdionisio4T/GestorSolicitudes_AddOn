@@ -66,6 +66,11 @@ function agregarEnlaces(seccion, valorCampo, etiquetaBase) {
 
   var html = urls.map(function(url, i) {
     var etiqueta = urls.length > 1 ? (etiquetaBase + ' (' + (i + 1) + ')') : etiquetaBase;
+    // Gmail rechaza la card entera si trae un enlace http://, así que
+    // esos se muestran como texto y solo los https:// quedan clicables.
+    if (!/^https:\/\//i.test(url)) {
+      return escaparHtml(etiqueta) + ': ' + escaparHtml(url);
+    }
     return '<a href="' + escaparHtml(url) + '">' + escaparHtml(etiqueta) + '</a>';
   }).join('<br>');
 
