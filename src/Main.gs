@@ -149,38 +149,54 @@ function buildHomepageCard(messageIdVolver, messageIdDetectar, activo) {
         )
     )
     // ── Pie: config + ayuda ──
-    .addSection(
-      CardService.newCardSection()
-        .setHeader('Otros')
-        .addWidget(
-          CardService.newButtonSet()
-            .addButton(
-              CardService.newTextButton()
-                .setText('⚙ Configuración')
-                .setOnClickAction(
-                  CardService.newAction()
-                    .setFunctionName('onMostrarConfig')
-                )
-            )
-            .addButton(
-              CardService.newTextButton()
-                .setText('❓ Ayuda')
-                .setOnClickAction(
-                  CardService.newAction()
-                    .setFunctionName('onAbrirAyuda')
-                )
-            )
-            .addButton(
-              CardService.newTextButton()
-                .setText('🔧 Diagnóstico')
-                .setOnClickAction(
-                  CardService.newAction()
-                    .setFunctionName('onAbrirDiagnostico')
-                )
+    .addSection(buildSeccionOtros_())
+    .build();
+}
+
+/**
+ * Sección "Otros" del menú principal, igual en Gmail y en Sheets:
+ * Configuración, Ayuda y Diagnóstico.
+ */
+function buildSeccionOtros_() {
+  return CardService.newCardSection()
+    .setHeader('Otros')
+    .addWidget(
+      CardService.newButtonSet()
+        .addButton(
+          CardService.newTextButton()
+            .setText('⚙ Configuración')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('onMostrarConfig')
             )
         )
-    )
-    .build();
+        .addButton(
+          CardService.newTextButton()
+            .setText('❓ Ayuda')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('onAbrirAyuda')
+            )
+        )
+        .addButton(
+          CardService.newTextButton()
+            .setText('🔧 Diagnóstico')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('onAbrirDiagnostico')
+            )
+        )
+    );
+}
+
+/**
+ * Menú principal según dónde está abierto el add-on: el panel de Sheets o
+ * el menú de Gmail. Lo usan las acciones que terminan "volviendo al inicio".
+ */
+function buildInicioSegunHost_(e) {
+  var host = e && e.commonEventObject && e.commonEventObject.hostApp;
+  if (host === 'SHEETS') return buildPanelSheetsCard_();
+  return buildHomepageCard(null, null, leerFormularioActivo_());
 }
 
 /**
@@ -339,6 +355,8 @@ function buildPanelSheetsCard_() {
           .setOnClickAction(CardService.newAction().setFunctionName('onListarEnviosEnCurso'))
       )
   );
+
+  card.addSection(buildSeccionOtros_());
 
   return card.build();
 }

@@ -963,27 +963,33 @@ function indiceLeerMapa_(sheetId, raizId, busquedaId) {
 
 /**
  * Filas del Sheet con lo necesario para buscar y escribir: caso, servicio,
- * componente, links de C y D, y el texto actual de N y O.
+ * componente, links de C y D, y el texto actual de N y O. Con desde y
+ * hasta lee solo esas filas y además los links de la columna O.
  */
-function indiceLeerFilasCompletas_(hoja) {
+function indiceLeerFilasCompletas_(hoja, desde, hasta) {
   var ultima = hoja.getLastRow();
-  if (ultima < 2) return [];
-  var n = ultima - 1;
-  var valores = hoja.getRange(2, 1, n, SHEET_NUM_COLS).getValues();
-  var columnaO = hoja.getRange(2, INDICE_COL_CARPETA, n, 1).getValues();
-  var richC = hoja.getRange(2, SHEET_COLS.DRIVE, n, 1).getRichTextValues();
-  var richD = hoja.getRange(2, SHEET_COLS.REPOSITORIO, n, 1).getRichTextValues();
+  var primera = Math.max(2, desde || 2);
+  var fin = Math.min(ultima, hasta || ultima);
+  if (fin < primera) return [];
+  var n = fin - primera + 1;
+  var valores = hoja.getRange(primera, 1, n, SHEET_NUM_COLS).getValues();
+  var columnaO = hoja.getRange(primera, INDICE_COL_CARPETA, n, 1).getValues();
+  var richC = hoja.getRange(primera, SHEET_COLS.DRIVE, n, 1).getRichTextValues();
+  var richD = hoja.getRange(primera, SHEET_COLS.REPOSITORIO, n, 1).getRichTextValues();
+  // Los links de la columna O solo hacen falta en la búsqueda por filas.
+  var richO = desde ? hoja.getRange(primera, INDICE_COL_CARPETA, n, 1).getRichTextValues() : null;
   var filas = [];
   for (var i = 0; i < n; i++) {
     var v = valores[i];
     var caso = String(v[SHEET_COLS.NUMERO_CASO - 1] || '').trim();
     if (!caso) continue;
     filas.push({
-      fila: i + 2,
+      fila: i + primera,
       caso: caso,
       servicio: String(v[SHEET_COLS.SERVICIO - 1] || ''),
       componente: String(v[SHEET_COLS.COMPONENTE - 1] || ''),
       ids: indiceIdsDeCelda_(richC[i][0]).concat(indiceIdsDeCelda_(richD[i][0])),
+      idsO: richO ? indiceIdsDeCelda_(richO[i][0]) : [],
       textoN: String(v[SHEET_COLS.ARCHIVOS_JSON - 1] || ''),
       textoO: String(columnaO[i][0] || '')
     });
@@ -995,22 +1001,17 @@ function indiceLeerFilasCompletas_(hoja) {
  * Qué filas trabajar, de arriba hacia abajo:
  *   normal: N vacía (buscar) o mixta, con links y motivo (limpiar).
  *   revisar: N con solo motivo, desde la fila indicada.
- *   rango: solo las filas de rango.desde a rango.hasta; N vacía o con solo
- *          motivo, desde la fila indicada.
  * Además, cualquier fila con la O vacía cuya carpeta se encontró (no
  * necesita Drive). Devuelve [{ fila, necesitaN, soloCarpeta, ... }].
  */
-function indiceElegirFilas_(filas, modo, desdeFila, carpetaDe, rango) {
+function indiceElegirFilas_(filas, modo, desdeFila, carpetaDe) {
   var lista = [];
   filas.forEach(function(f) {
-    if (modo === 'rango' && (!rango || f.fila < rango.desde || f.fila > rango.hasta)) return;
     var celda = indiceAnalizarCeldaN_(f.textoN);
     var mixta = celda.links.length > 0 && celda.motivos.length > 0;
     var necesitaN;
     if (modo === 'revisar') {
       necesitaN = celda.links.length === 0 && celda.motivos.length > 0 && f.fila >= (desdeFila || 0);
-    } else if (modo === 'rango') {
-      necesitaN = celda.links.length === 0 && f.fila >= (desdeFila || 0);
     } else {
       necesitaN = celda.links.length === 0 && celda.motivos.length === 0;
     }
@@ -1228,8 +1229,7 @@ function indiceRevisarOriginalesDeFila_(fila, arbol, originales, cuentaO, quedaM
 }
 
 /**
- * Una ejecución de la búsqueda. modo: 'normal' (filas con la N vacía),
- * 'rango' (las filas de nota.rango, con la N vacía o con solo motivo) o
+ * Una ejecución de la búsqueda. modo: 'normal' (filas con la N vacía) o
  * 'revisar' (filas con solo motivo, desde la fila guardada en la nota).
  *
  * Devuelve { ocupado, nota } si otra búsqueda tiene el turno, o
@@ -1350,7 +1350,7 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
 
     var lista = indiceElegirFilas_(filas, modo, nota.fila, function(f) {
       return indiceCarpetaDeFila_(f, arbol, directorio);
-    }, nota.rango);
+    });
 
     var originales = { estados: {}, carpetas: {}, jsons: [], posJson: {}, pendientes: [], cola: [] };
     var cuentaO = { revisados: 0, conAcceso: 0, sinAcceso: 0, carpetas: 0, jsons: 0 };
@@ -1359,10 +1359,10 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
     var escribirBloque = function() {
       if (bloque.length === 0) return true;
       for (var intento = 0; intento < INDICE_BUSQUEDA.REINTENTOS_LOCK; intento++) {
-        if (indiceEscribirBloqueFilas_(ss, bloque, cuenta, modo !== 'normal')) {
+        if (indiceEscribirBloqueFilas_(ss, bloque, cuenta, modo === 'revisar')) {
           nota.filaActual = bloque[bloque.length - 1].fila;
           nota.progreso = (nota.progreso || 0) + 1;
-          if (modo !== 'normal') nota.fila = nota.filaActual + 1;
+          if (modo === 'revisar') nota.fila = nota.filaActual + 1;
           bloque = [];
           return true;
         }
@@ -1414,12 +1414,9 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
     cuenta.originalesRevisados = (cuenta.originalesRevisados || 0) + cuentaO.revisados;
     if (!cortado) {
       indiceFormatoColumnas_(hoja);
-      // "JSON sin fila" se reescribe solo al revisar todo el Sheet.
-      if (modo !== 'rango') {
-        var sinFila = indiceJsonSinFila_(arbol, directorio, filas);
-        indiceEscribirSinFila_(ss, sinFila);
-        cuenta.sinFila = sinFila.length;
-      }
+      var sinFila = indiceJsonSinFila_(arbol, directorio, filas);
+      indiceEscribirSinFila_(ss, sinFila);
+      cuenta.sinFila = sinFila.length;
       indiceBorrarMapa_(sheetId);
       nota.etapa = 'terminado';
       nota.terminadoEn = Date.now();
@@ -1468,19 +1465,15 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
 /**
  * Deja la nota lista para una búsqueda en el modo pedido. Si ya había una
  * a medias en el mismo modo, la retoma (el avance está en la columna N).
- * rango: { desde, hasta } al iniciar una búsqueda por filas; siempre
- * empieza una nueva. Sin rango, una búsqueda por filas a medias se retoma
- * con el que tenía.
  * Devuelve { ocupado, nota } o { nota }.
  */
-function indicePrepararBusqueda_(sheetId, modo, rango) {
+function indicePrepararBusqueda_(sheetId, modo) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { ocupado: true, nota: indiceLeerNota_(sheetId) };
   try {
     var nota = indiceLeerNota_(sheetId);
     if (nota && nota.ocupadoHasta > Date.now()) return { ocupado: true, nota: nota };
-    var retomar = !rango && nota && nota.modo === modo &&
-      (nota.etapa === 'buscando' || nota.etapa === 'detenido');
+    var retomar = nota && nota.modo === modo && (nota.etapa === 'buscando' || nota.etapa === 'detenido');
     if (retomar) {
       // Detenida (tope de partes o sin avance): el tope vuelve a contar.
       if (nota.etapa === 'detenido') nota.partes = 0;
@@ -1497,10 +1490,6 @@ function indicePrepararBusqueda_(sheetId, modo, rango) {
         ultimaFila: 0,
         cuenta: {}
       };
-      if (rango) {
-        nota.rango = { desde: rango.desde, hasta: rango.hasta };
-        nota.fila = rango.desde;
-      }
     }
     nota.activador = null;
     nota.adelantada = null;
@@ -1705,16 +1694,7 @@ function continuarBusquedaJson(e) {
 
 // ── Tarjeta de la búsqueda ────────────────────────────────────────────
 
-var INDICE_NOMBRE_MODO = { normal: 'Buscar JSON', revisar: 'Revisar avisos', rango: 'Buscar en filas' };
-
-/**
- * Nombre de la búsqueda de una nota; la de filas dice cuáles
- * ("Buscar en filas 120 a 135").
- */
-function indiceNombreBusqueda_(nota) {
-  if (nota.modo === 'rango' && nota.rango) return 'Buscar en ' + indiceTextoRango_(nota.rango);
-  return INDICE_NOMBRE_MODO[nota.modo];
-}
+var INDICE_NOMBRE_MODO = { normal: 'Buscar JSON', revisar: 'Revisar avisos' };
 
 var INDICE_TEXTO_ESTADO_ACTIVADOR = {
   programado: 'programada',
@@ -1795,9 +1775,9 @@ function buildBusquedaJsonCard_() {
   var corriendo = !!(nota && nota.ocupadoHasta > ahora) && !cortada;
   var avance = nota && nota.partes > 0
     ? 'Va en la fila <b>' + (nota.filaActual || 0) + '</b> de ' + (nota.ultimaFila || '?') +
-      ' · parte ' + nota.partes + ' · ' + indiceNombreBusqueda_(nota) +
+      ' · parte ' + nota.partes + ' · ' + INDICE_NOMBRE_MODO[nota.modo] +
       (nota.mapaCarpetas ? '<br>Mapa del Drive: ' + nota.mapaCarpetas + ' carpetas leídas' : '')
-    : (nota ? indiceNombreBusqueda_(nota) : '');
+    : (nota ? INDICE_NOMBRE_MODO[nota.modo] : '');
 
   if (!nota) {
     parrafo('Busca los JSON de cada fila y los escribe en la columna <b>N</b>. Si no hay, escribe el motivo. ' +
@@ -1862,7 +1842,7 @@ function buildBusquedaJsonCard_() {
     boton('Buscar JSON', 'onBuscarJson', false);
     boton('Revisar avisos', 'onRevisarAvisosJson', false);
   } else {
-    parrafo('✅ <b>' + indiceNombreBusqueda_(nota) + ' terminó el ' + formatearFechaIndice_(nota.terminadoEn) +
+    parrafo('✅ <b>' + INDICE_NOMBRE_MODO[nota.modo] + ' terminó el ' + formatearFechaIndice_(nota.terminadoEn) +
       '</b>, en ' + nota.partes + ' parte' + (nota.partes === 1 ? '' : 's') + '.');
     boton('Buscar JSON', 'onBuscarJson', true);
     boton('Revisar avisos', 'onRevisarAvisosJson', false);
@@ -1887,17 +1867,34 @@ function buildBusquedaJsonCard_() {
 
   // Búsqueda por filas: solo cuando no hay otra búsqueda en curso.
   if (!nota || nota.etapa === 'terminado' || nota.etapa === 'detenido') {
-    card.addSection(
-      CardService.newCardSection()
-        .setHeader('Buscar solo en algunas filas')
-        .addWidget(CardService.newTextParagraph().setText(
-          'Vuelve a buscar las filas indicadas que no tienen links en la columna N (vacías o con motivo). ' +
-          'Para una sola fila, deja "Hasta fila" vacío.'))
-        .addWidget(CardService.newTextInput().setFieldName('rangoDesde').setTitle('Desde fila'))
-        .addWidget(CardService.newTextInput().setFieldName('rangoHasta').setTitle('Hasta fila'))
-        .addWidget(CardService.newTextButton().setText('Buscar en filas')
-          .setOnClickAction(CardService.newAction().setFunctionName('onBuscarRangoJson')))
-    );
+    var ultimaFilas = null;
+    try {
+      ultimaFilas = JSON.parse(
+        PropertiesService.getScriptProperties().getProperty(INDICE_FILAS.PREFIJO + sheetId) || 'null');
+    } catch (err) {
+      ultimaFilas = null;
+    }
+    var desdeInput = CardService.newTextInput().setFieldName('rangoDesde').setTitle('Desde fila');
+    var hastaInput = CardService.newTextInput().setFieldName('rangoHasta').setTitle('Hasta fila');
+    // Si la última no alcanzó a terminar, queda lista para seguir.
+    if (ultimaFilas && ultimaFilas.sigue) {
+      desdeInput.setValue(String(ultimaFilas.sigue.desde));
+      hastaInput.setValue(String(ultimaFilas.sigue.hasta));
+    }
+    var seccionFilas = CardService.newCardSection()
+      .setHeader('Buscar solo en algunas filas')
+      .addWidget(CardService.newTextParagraph().setText(
+        'Revisa al momento las filas indicadas que no tienen links en la columna N (vacías o con motivo), ' +
+        'yendo directo a las carpetas de cada fila. Para una sola fila, deja "Hasta fila" vacío.'))
+      .addWidget(desdeInput)
+      .addWidget(hastaInput)
+      .addWidget(CardService.newTextButton().setText('Buscar en filas')
+        .setOnClickAction(CardService.newAction().setFunctionName('onBuscarRangoJson')));
+    if (ultimaFilas && ultimaFilas.texto) {
+      seccionFilas.addWidget(CardService.newTextParagraph().setText(
+        '<i>Última (' + formatearFechaIndice_(ultimaFilas.en) + '): ' + escaparHtml(ultimaFilas.texto) + '</i>'));
+    }
+    card.addSection(seccionFilas);
   }
 
   var activos = 0;
@@ -1973,12 +1970,195 @@ function indiceTextoRango_(rango) {
   return rango.desde === rango.hasta ? 'fila ' + rango.desde : 'filas ' + rango.desde + ' a ' + rango.hasta;
 }
 
+// ── Búsqueda por filas ────────────────────────────────────────────────
+//
+// Para revisar unas pocas filas no se recorre la raíz: se va directo a las
+// carpetas de cada fila (su ruta [APIM/]Servicio/Caso dentro de la raíz y
+// los links de las columnas C, D y O) y corre en la misma acción del botón.
+// No ve .json de carpetas del caso que estén en otra parte de la raíz sin
+// link en la fila: para eso están "Buscar JSON" y "Revisar avisos".
+
+var INDICE_FILAS = {
+  PREFIJO: 'INDICE_FILAS_',
+  // Una acción de tarjeta tiene 30 s: este es el tiempo para consultar
+  // Drive; el resto queda para leer y escribir el Sheet.
+  PRESUPUESTO_MS: 15000
+};
+
 /**
- * "Buscar JSON", "Revisar avisos" y "Buscar en filas": preparan la nota y
- * programan la primera parte. No buscan nada aquí (una acción de tarjeta
- * tiene 30 s). rango: { desde, hasta } para el modo 'rango'.
+ * Carpetas del caso de una fila por su ruta dentro de la raíz:
+ * [APIM/]Servicio/Caso y sus reenvíos Caso_N. hijosDe(id) devuelve los
+ * hijos de una carpeta. Devuelve [{ id, ruta }] ordenado por ruta.
  */
-function indiceIniciarDesdePanel_(modo, host, rango) {
+function indiceCarpetasPorRuta_(fila, raizId, hijosDe) {
+  var caso = indiceNormalizarCaso_(fila.caso);
+  if (!caso) return [];
+  var esCarpeta = function(h) { return h.mimeType === INDICE_CONFIG.CARPETA_MIME; };
+  var base = raizId;
+  var prefijo = '';
+  if (esComponenteAPIM(String(fila.componente || '').trim())) {
+    var apim = hijosDe(raizId).filter(function(h) {
+      return esCarpeta(h) && h.name === CONFIG.CARPETA_APIM;
+    })[0];
+    if (!apim) return [];
+    base = apim.id;
+    prefijo = CONFIG.CARPETA_APIM + '/';
+  }
+  var servicio = indiceLimpiarServicio_(fila.servicio);
+  var res = [];
+  hijosDe(base).forEach(function(s) {
+    if (!esCarpeta(s) || s.name !== servicio) return;
+    hijosDe(s.id).forEach(function(c) {
+      if (esCarpeta(c) && indiceNormalizarCaso_(indiceQuitarSufijo_(c.name)) === caso) {
+        res.push({ id: c.id, ruta: prefijo + s.name + '/' + c.name });
+      }
+    });
+  });
+  res.sort(function(a, b) { return a.ruta.localeCompare(b.ruta); });
+  return res;
+}
+
+/**
+ * Busca los .json de una fila yendo directo a sus carpetas. Primero las
+ * nuestras (por ruta y las de la columna O); si ahí no hay, los links de C
+ * y D. Devuelve { resultado, carpeta } con la forma que espera
+ * indiceEscribirBloqueFilas_, o null si no alcanzó el tiempo.
+ */
+function indiceBuscarFila_(fila, raizId, hijosDe, originales, cuentaO, quedaMs) {
+  var arbol = { raizId: raizId, carpetas: {}, jsons: [] };
+  var directorio = { porCaso: {}, casosDeJson: {} };
+  var sinRepetir = function(ids) {
+    return ids.filter(function(id, i) { return ids.indexOf(id) === i; });
+  };
+
+  var porRuta = [];
+  try {
+    porRuta = indiceCarpetasPorRuta_(fila, raizId, hijosDe);
+  } catch (err) {
+    console.warn('[Indice] No se pudo buscar la carpeta del caso por su ruta: ' + err.message);
+  }
+  var nuestras = sinRepetir(porRuta.map(function(c) { return c.id; }).concat(fila.idsO || []));
+
+  var resultado = null;
+  if (nuestras.length > 0) {
+    var paso1 = { caso: fila.caso, ids: nuestras };
+    if (!indiceRevisarOriginalesDeFila_(paso1, arbol, originales, cuentaO, quedaMs)) return null;
+    resultado = indiceResultadoFila_(paso1, arbol, directorio, originales);
+  }
+  if (!resultado || resultado.links.length === 0) {
+    var todos = { caso: fila.caso, ids: sinRepetir(nuestras.concat(fila.ids || [])) };
+    if (!indiceRevisarOriginalesDeFila_(todos, arbol, originales, cuentaO, quedaMs)) return null;
+    resultado = indiceResultadoFila_(todos, arbol, directorio, originales);
+    var hayNuestra = nuestras.some(function(id) { return originales.estados[id] === 'carpeta'; });
+    if (hayNuestra && resultado.motivo === INDICE_MOTIVOS.original_sin_json) {
+      resultado.motivo = INDICE_MOTIVOS.carpeta_sin_json;
+    }
+  }
+
+  var yaEnlazada = porRuta.some(function(c) { return (fila.ids || []).indexOf(c.id) !== -1; });
+  return {
+    resultado: resultado,
+    carpeta: porRuta.length > 0 && !yaEnlazada ? { por: 'ruta', carpetas: porRuta } : null
+  };
+}
+
+/**
+ * Búsqueda por filas, dentro de la acción del botón. Trabaja las filas del
+ * rango que no tienen links en la columna N (vacías o con motivo) y limpia
+ * las que tienen links y motivo; las que tienen solo links no se tocan.
+ * Si no alcanza el tiempo, escribe lo hecho y dice desde qué fila seguir.
+ * Devuelve { solicitudes, trabajadas, cuenta, faltaDesde }.
+ */
+function indiceBuscarEnFilas_(sheetId, rango) {
+  var inicio = Date.now();
+  // indiceRevisarOriginalesDeFila_ se detiene cuando quedan menos de
+  // MARGEN_FILA_MS; aquí el margen es el propio presupuesto.
+  var quedaMs = function() {
+    return INDICE_FILAS.PRESUPUESTO_MS - (Date.now() - inicio) + INDICE_BUSQUEDA.MARGEN_FILA_MS;
+  };
+  var ss = SpreadsheetApp.openById(sheetId);
+  var hoja = ss.getSheetByName(obtenerSheetTab());
+  if (!hoja) throw new Error('No existe la pestaña de solicitudes configurada.');
+  var raizId = obtenerCarpetaRaizId();
+  if (!raizId) throw new Error('No hay carpeta raíz configurada.');
+
+  var memoria = {};
+  var hijosDe = function(id) {
+    if (!memoria[id]) memoria[id] = indiceListarHijos_(id, null, true);
+    return memoria[id];
+  };
+  var originales = { estados: {}, carpetas: {}, jsons: [], posJson: {}, pendientes: [], cola: [] };
+  var cuentaO = { revisados: 0, conAcceso: 0, sinAcceso: 0, carpetas: 0, jsons: 0 };
+  var cuenta = {};
+  var bloque = [];
+  var faltaDesde = null;
+
+  var filas = indiceLeerFilasCompletas_(hoja, rango.desde, rango.hasta);
+  for (var i = 0; i < filas.length; i++) {
+    var f = filas[i];
+    var celda = indiceAnalizarCeldaN_(f.textoN);
+    var encontrado = { resultado: null, carpeta: null };
+    if (celda.links.length > 0 && celda.motivos.length === 0) continue;
+    if (celda.links.length === 0) {
+      if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
+        faltaDesde = f.fila;
+        break;
+      }
+      encontrado = indiceBuscarFila_(f, raizId, hijosDe, originales, cuentaO, quedaMs);
+      if (!encontrado) {
+        faltaDesde = f.fila;
+        break;
+      }
+    }
+    bloque.push({
+      fila: f.fila,
+      caso: f.caso,
+      servicio: f.servicio,
+      resultado: encontrado.resultado,
+      carpeta: encontrado.carpeta,
+      soloCarpeta: false
+    });
+  }
+
+  if (bloque.length > 0 && !indiceEscribirBloqueFilas_(ss, bloque, cuenta, true)) {
+    throw new Error('el Sheet está ocupado, intenta en unos segundos.');
+  }
+  console.log('[Indice] Búsqueda por filas ' + rango.desde + ' a ' + rango.hasta + ': ' + bloque.length +
+    ' trabajadas, ' + (cuentaO.carpetas + cuentaO.revisados) + ' consultas a Drive, en ' +
+    formatearDuracionIndice_(Date.now() - inicio) + (faltaDesde ? ', falta desde la fila ' + faltaDesde : ''));
+  return { solicitudes: filas.length, trabajadas: bloque.length, cuenta: cuenta, faltaDesde: faltaDesde };
+}
+
+/**
+ * Texto del resultado de una búsqueda por filas (solo calcula).
+ */
+function indiceTextoResultadoFilas_(rango, res) {
+  var donde = indiceTextoRango_(rango);
+  donde = donde.charAt(0).toUpperCase() + donde.substring(1);
+  if (res.trabajadas === 0 && !res.faltaDesde) {
+    return donde + ': no hay nada que buscar (' +
+      (res.solicitudes === 0 ? 'no hay solicitudes' : 'ya tienen sus JSON') + ').';
+  }
+  var c = res.cuenta || {};
+  var partes = [];
+  if (c.links) partes.push(c.links + ' con JSON');
+  var motivos = (c.motivo || 0) + (c.mismoMotivo || 0);
+  if (motivos) partes.push(motivos + ' sin JSON (con su motivo)');
+  if (c.limpiada) partes.push(c.limpiada + ' limpiada(s)');
+  if (c.carpetas) partes.push(c.carpetas + ' con carpeta en la columna O');
+  if (c.cambiaron) partes.push(c.cambiaron + ' saltada(s) porque cambiaron');
+  var texto = donde + ': ' + (partes.length ? partes.join(', ') : 'sin cambios') + '.';
+  if (res.faltaDesde) {
+    texto += ' No alcanzó el tiempo: falta desde la fila ' + res.faltaDesde + '; presiona otra vez para seguir.';
+  }
+  return texto;
+}
+
+/**
+ * "Buscar JSON" y "Revisar avisos": preparan la nota y programan la primera
+ * parte. No buscan nada aquí (una acción de tarjeta tiene 30 s).
+ */
+function indiceIniciarDesdePanel_(modo, host) {
   var motivo = motivoConfigInvalida();
   if (motivo) return motivo;
   var sheetId = obtenerSheetId();
@@ -1988,25 +2168,21 @@ function indiceIniciarDesdePanel_(modo, host, rango) {
   if (nota && nota.ocupadoHasta > Date.now()) {
     return 'Ya hay una búsqueda corriendo: va en la fila ' + (nota.filaActual || 0) + '.';
   }
-  if (nota && (nota.modo !== modo || rango) && nota.etapa === 'buscando' && !indiceParteCortada_(nota, Date.now())) {
-    return 'Hay un "' + indiceNombreBusqueda_(nota) + '" a medias. Termínalo con "Continuar" o usa "Detener".';
+  if (nota && nota.modo !== modo && nota.etapa === 'buscando' && !indiceParteCortada_(nota, Date.now())) {
+    return 'Hay un "' + INDICE_NOMBRE_MODO[nota.modo] + '" a medias. Termínalo con "Continuar" o usa "Detener".';
   }
 
   // Revisión previa: si no hay filas que trabajar, se responde al instante
   // sin recorrer Drive.
   var hoja = SpreadsheetApp.openById(sheetId).getSheetByName(obtenerSheetTab());
   if (!hoja) return 'No existe la pestaña de solicitudes configurada.';
-  var filas = indiceLeerFilasCompletas_(hoja);
-  if (indiceElegirFilas_(filas, modo, 0, null, rango).length === 0) {
-    if (modo === 'rango') {
-      return 'En la ' + indiceTextoRango_(rango) + ' no hay nada que buscar: no hay solicitudes o ya tienen sus JSON.';
-    }
+  if (indiceElegirFilas_(indiceLeerFilasCompletas_(hoja), modo, 0, null).length === 0) {
     return modo === 'revisar'
       ? 'No hay filas con aviso para revisar.'
       : 'No hay filas con la columna N vacía: no hay nada nuevo que buscar.';
   }
 
-  var prep = indicePrepararBusqueda_(sheetId, modo, rango);
+  var prep = indicePrepararBusqueda_(sheetId, modo);
   if (prep.ocupado) return 'Ya hay una búsqueda corriendo.';
   indiceActualizarNota_(sheetId, { iniciadoDesde: host });
   return INDICE_NOMBRE_MODO[modo] + ': ' + indiceTextoActivador_(indiceProgramarBusqueda_(sheetId, 'panel de ' + host));
@@ -2151,6 +2327,7 @@ function onEmpezarDeCeroBusquedaJson(e) {
     });
     indiceBorrarMapa_(sheetId);
     PropertiesService.getScriptProperties().deleteProperty(INDICE_BUSQUEDA.PREFIJO_NOTA + sheetId);
+    PropertiesService.getScriptProperties().deleteProperty(INDICE_FILAS.PREFIJO + sheetId);
 
     var ss = SpreadsheetApp.openById(sheetId);
     var sinFila = ss.getSheetByName(INDICE_PESTANA_SIN_FILA);
@@ -2266,10 +2443,27 @@ function onBuscarRangoJson(e) {
   try {
     var formInputs = (e && e.commonEventObject && e.commonEventObject.formInputs) || {};
     var rango = indiceLeerRango_(leerInput(formInputs, 'rangoDesde'), leerInput(formInputs, 'rangoHasta'));
-    aviso = rango.error || indiceIniciarDesdePanel_('rango', indiceHost_(e), rango);
+    var sheetId = obtenerSheetId();
+    var nota = sheetId ? indiceLeerNota_(sheetId) : null;
+    var ahora = Date.now();
+    if (motivoConfigInvalida()) {
+      aviso = motivoConfigInvalida();
+    } else if (rango.error) {
+      aviso = rango.error;
+    } else if (nota && nota.ocupadoHasta > ahora && !indiceParteCortada_(nota, ahora)) {
+      aviso = 'Hay una búsqueda corriendo. Espera a que termine o usa "Detener".';
+    } else {
+      var res = indiceBuscarEnFilas_(sheetId, rango);
+      aviso = indiceTextoResultadoFilas_(rango, res);
+      PropertiesService.getScriptProperties().setProperty(INDICE_FILAS.PREFIJO + sheetId, JSON.stringify({
+        en: Date.now(),
+        texto: aviso,
+        sigue: res.faltaDesde ? { desde: res.faltaDesde, hasta: rango.hasta } : null
+      }));
+    }
   } catch (err) {
     console.error('[Indice] ' + err.message);
-    aviso = 'No se pudo iniciar la búsqueda: ' + err.message;
+    aviso = 'No se pudo buscar en esas filas: ' + err.message;
   }
   return indiceRespuestaBusqueda_(aviso);
 }

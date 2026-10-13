@@ -385,15 +385,6 @@ test('eleccion de filas: normal toma N vacias y mixtas; revisar toma solo motivo
     [[2, true, false, false], [3, false, false, true], [4, false, true, false]]);
   assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'revisar', 6, carpetaDe)),
     [[3, false, false, true], [4, false, true, false], [6, true, false, false]]);
-  // Por filas: solo el rango; vacias y con motivo se buscan, con links no.
-  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'rango', 2, carpetaDe, { desde: 2, hasta: 5 })),
-    [[2, true, false, false], [3, false, false, true], [4, false, true, false], [5, true, false, false]]);
-  // Al seguir en otra parte, no repite las que ya paso.
-  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'rango', 6, carpetaDe, { desde: 5, hasta: 7 })),
-    [[6, true, false, false]]);
-  // Una sola fila con links: nada que hacer.
-  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'rango', 7, carpetaDe, { desde: 7, hasta: 7 })), []);
-  assert.deepStrictEqual(resumen(gs.indiceElegirFilas_(filas, 'rango', 0, carpetaDe, null)), []);
 });
 
 test('buscar en filas: lectura de "Desde fila" y "Hasta fila"', () => {
@@ -407,26 +398,128 @@ test('buscar en filas: lectura de "Desde fila" y "Hasta fila"', () => {
   assert.ok(r('135', '120').error);
   assert.strictEqual(gs.indiceTextoRango_({ desde: 120, hasta: 135 }), 'filas 120 a 135');
   assert.strictEqual(gs.indiceTextoRango_({ desde: 120, hasta: 120 }), 'fila 120');
-  assert.strictEqual(gs.indiceNombreBusqueda_({ modo: 'rango', rango: { desde: 120, hasta: 135 } }), 'Buscar en filas 120 a 135');
-  assert.strictEqual(gs.indiceNombreBusqueda_({ modo: 'revisar' }), 'Revisar avisos');
 });
 
-test('buscar en filas: siempre empieza una busqueda nueva y se retoma con su rango', () => {
-  const props = {};
-  gs.PropertiesService = { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; } }) };
-  gs.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
-  // Habia una busqueda por filas detenida, con otro rango.
-  props.INDICE_NOTA_X = JSON.stringify({ modo: 'rango', etapa: 'detenido', partes: 2, fila: 40, rango: { desde: 10, hasta: 90 }, cuenta: { links: 5 } });
-  const nueva = plano(gs.indicePrepararBusqueda_('X', 'rango', { desde: 120, hasta: 135 })).nota;
-  assert.deepStrictEqual(nueva.rango, { desde: 120, hasta: 135 });
-  assert.strictEqual(nueva.fila, 120);
-  assert.strictEqual(nueva.partes, 0);
-  assert.deepStrictEqual(nueva.cuenta, {});
-  // "Continuar" (sin rango): sigue la misma, con su rango y su avance.
-  props.INDICE_NOTA_X = JSON.stringify({ ...nueva, fila: 128 });
-  const sigue = plano(gs.indicePrepararBusqueda_('X', 'rango')).nota;
-  assert.deepStrictEqual(sigue.rango, { desde: 120, hasta: 135 });
-  assert.strictEqual(sigue.fila, 128);
+// Drive falso para la busqueda por filas: la raiz con su estructura normal
+// y carpetas originales de otra persona, fuera de la raiz.
+function driveDeFilas() {
+  const R = ID('raizF');
+  const CARP = 'application/vnd.google-apps.folder';
+  const c = (id, name, padre) => ({ id: ID(id), name, mimeType: CARP, padre: padre === null ? R : ID(padre) });
+  const j = (id, name, padre, md5) => ({
+    id: ID(id), name, mimeType: 'application/json', padre: ID(padre), modifiedTime: '2026-09-01T00:00:00Z', md5Checksum: md5
+  });
+  const items = [
+    c('pagos', 'Pagos', null),
+    c('p9300', '9300', 'pagos'),
+    c('p9300b', '9300_2', 'pagos'),
+    c('p9300v', 'v1.0', 'p9300'),
+    c('p5555', '5555', 'pagos'),
+    c('p19300', '19300', 'pagos'),
+    c('apim', 'APIM', null),
+    c('apagos', 'Pagos', 'apim'),
+    c('a9300', '9300', 'apagos'),
+    { id: ID('orig'), name: 'Entrega', mimeType: CARP, padre: 'otraUnidad' },
+    { id: ID('origVacio'), name: 'Entrega vacia', mimeType: CARP, padre: 'otraUnidad' },
+    j('j1', 'config.json', 'p9300v', 'A'),
+    j('j2', 'config.json', 'p9300b', 'A'),
+    j('j3', 'tarifas.json', 'p9300b', 'B'),
+    j('j4', 'api.json', 'a9300', 'C'),
+    j('j5', 'otro.json', 'p19300', 'D'),
+    j('jo', 'original.json', 'orig', 'E'),
+    { id: ID('pdf'), name: 'manual.pdf', mimeType: 'application/pdf', padre: ID('p5555') }
+  ];
+  const consultas = [];
+  const Drive = { Files: {
+    get: (id) => {
+      consultas.push('get ' + id);
+      const f = items.find((i) => i.id === id);
+      if (!f) throw new Error('File not found: ' + id);
+      return f;
+    },
+    list: (p) => {
+      const padre = /^'([^']+)' in parents/.exec(p.q)[1];
+      consultas.push('list ' + padre);
+      return { files: items.filter((i) => i.padre === padre) };
+    }
+  } };
+  return { R, Drive, consultas };
+}
+
+function buscarFilaDePrueba(fila) {
+  const d = driveDeFilas();
+  gs.Drive = d.Drive;
+  const memoria = {};
+  const hijosDe = (id) => (memoria[id] = memoria[id] || gs.indiceListarHijos_(id, null, true));
+  const originales = { estados: {}, carpetas: {}, jsons: [], posJson: {}, pendientes: [], cola: [] };
+  const cuentaO = { revisados: 0, conAcceso: 0, sinAcceso: 0, carpetas: 0, jsons: 0 };
+  const res = gs.indiceBuscarFila_({ ids: [], idsO: [], ...fila }, d.R, hijosDe, originales, cuentaO, () => 600000);
+  return { res: plano(res), consultas: d.consultas, R: d.R };
+}
+
+const urlJson = (id) => 'https://drive.google.com/file/d/' + ID(id) + '/view';
+
+test('buscar en filas: la carpeta del caso por su ruta, sin recorrer la raiz', () => {
+  const r = buscarFilaDePrueba({ caso: '9300', servicio: 'Pagos', componente: 'ESB' });
+  // Junta 9300 y 9300_2; el config.json identico sale una sola vez.
+  assert.strictEqual(r.res.resultado.links.length, 2);
+  assert.ok(r.res.resultado.links.includes(urlJson('j3')));
+  assert.deepStrictEqual(r.res.carpeta.carpetas.map((c) => c.ruta), ['Pagos/9300', 'Pagos/9300_2']);
+  // No entra a carpetas de otros casos ni a APIM.
+  assert.ok(!r.consultas.includes('list ' + ID('p5555')));
+  assert.ok(!r.consultas.includes('list ' + ID('p19300')));
+  assert.ok(!r.consultas.includes('list ' + ID('apim')));
+});
+
+test('buscar en filas: componente API busca dentro de APIM', () => {
+  const r = buscarFilaDePrueba({ caso: '9300', servicio: 'Pagos', componente: 'API' });
+  assert.deepStrictEqual(r.res.resultado.links, [urlJson('j4')]);
+  assert.deepStrictEqual(r.res.carpeta.carpetas.map((c) => c.ruta), ['APIM/Pagos/9300']);
+});
+
+test('buscar en filas: sin JSON en nuestra carpeta, usa el link original de la fila', () => {
+  const base = { caso: '5555', servicio: 'Pagos', componente: 'ESB' };
+  const conOriginal = buscarFilaDePrueba({ ...base, ids: [ID('orig')] });
+  assert.deepStrictEqual(conOriginal.res.resultado.links, [urlJson('jo')]);
+  // Nuestra carpeta existe y esta vacia; el original tampoco tiene.
+  const sinNada = buscarFilaDePrueba({ ...base, ids: [ID('origVacio')] });
+  assert.strictEqual(sinNada.res.resultado.motivo, 'Carpeta sin JSON');
+  // La carpeta de la fila ya esta enlazada en la C: no se repite en la O.
+  const enlazada = buscarFilaDePrueba({ ...base, ids: [ID('p5555')] });
+  assert.strictEqual(enlazada.res.carpeta, null);
+});
+
+test('buscar en filas: motivos cuando no hay carpeta por ruta', () => {
+  const base = { caso: '4444', servicio: 'Pagos', componente: 'ESB' };
+  assert.strictEqual(buscarFilaDePrueba(base).res.resultado.motivo, 'Sin carpeta ni link');
+  assert.strictEqual(buscarFilaDePrueba({ ...base, ids: [ID('borrado')] }).res.resultado.motivo, 'Sin acceso al original');
+  assert.strictEqual(buscarFilaDePrueba({ ...base, ids: [ID('origVacio')] }).res.resultado.motivo, 'Original sin JSON');
+  // La carpeta copiada anotada en la columna O tambien cuenta.
+  const porO = buscarFilaDePrueba({ ...base, servicio: 'Otro nombre', idsO: [ID('p19300')] });
+  assert.deepStrictEqual(porO.res.resultado.links, [urlJson('j5')]);
+  assert.strictEqual(porO.res.carpeta, null);
+});
+
+test('buscar en filas: si no alcanza el tiempo no devuelve resultado', () => {
+  const d = driveDeFilas();
+  gs.Drive = d.Drive;
+  const hijosDe = (id) => gs.indiceListarHijos_(id, null, true);
+  const originales = { estados: {}, carpetas: {}, jsons: [], posJson: {}, pendientes: [], cola: [] };
+  const cuentaO = { revisados: 0, conAcceso: 0, sinAcceso: 0, carpetas: 0, jsons: 0 };
+  const fila = { caso: '9300', servicio: 'Pagos', componente: 'ESB', ids: [], idsO: [] };
+  assert.strictEqual(gs.indiceBuscarFila_(fila, d.R, hijosDe, originales, cuentaO, () => 0), null);
+});
+
+test('buscar en filas: texto del resultado', () => {
+  const t = (rango, res) => gs.indiceTextoResultadoFilas_(rango, res);
+  const R = { desde: 120, hasta: 124 };
+  assert.strictEqual(t(R, { solicitudes: 5, trabajadas: 3, cuenta: { links: 2, motivo: 1 }, faltaDesde: null }),
+    'Filas 120 a 124: 2 con JSON, 1 sin JSON (con su motivo).');
+  assert.strictEqual(t({ desde: 120, hasta: 120 }, { solicitudes: 1, trabajadas: 0, cuenta: {}, faltaDesde: null }),
+    'Fila 120: no hay nada que buscar (ya tienen sus JSON).');
+  assert.strictEqual(t(R, { solicitudes: 0, trabajadas: 0, cuenta: {}, faltaDesde: null }),
+    'Filas 120 a 124: no hay nada que buscar (no hay solicitudes).');
+  assert.ok(t(R, { solicitudes: 5, trabajadas: 2, cuenta: { links: 2 }, faltaDesde: 122 }).includes('falta desde la fila 122'));
 });
 
 test('JSON sin fila: caso que no esta en el Sheet, carpeta sin numero, y lo enlazado no entra', () => {

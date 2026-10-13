@@ -167,11 +167,28 @@ Cualquier línea de la columna N que no sea una URL se toma como motivo. Las cel
 |---|---|
 | Buscar JSON | Trabaja las filas con la columna N vacía (las solicitudes nuevas). |
 | Revisar avisos | Vuelve a buscar las filas que tienen solo un motivo, por si ya subieron el JSON o dieron el permiso. |
-| Buscar en filas | Con "Desde fila" y "Hasta fila": trabaja solo esas filas, las que tienen la columna N vacía o con motivo. Para una sola fila, "Hasta fila" queda vacío. No reescribe la pestaña "JSON sin fila". |
+| Buscar en filas | Con "Desde fila" y "Hasta fila": revisa al momento solo esas filas (ver [Búsqueda por filas](#búsqueda-por-filas)). |
 | Ver avance | Refresca la tarjeta y deja lista la parte siguiente (ver abajo). |
 | Continuar | Sigue una búsqueda que quedó a medias. |
 | Detener | Para la búsqueda; lo ya escrito se conserva. |
 | Empezar de cero | Borra el avance, la columna O, la pestaña "JSON sin fila" y los motivos de la columna N. Los links de la columna N se conservan. |
+
+### Búsqueda por filas
+
+Para revisar unas pocas filas (por ejemplo, porque ya subieron el JSON o dieron el permiso) no hace falta recorrer toda la raíz. "Buscar en filas" corre dentro del mismo clic y va directo a las carpetas de cada fila:
+
+1. **La ruta del caso en la raíz:** `Servicio/Caso` o `APIM/Servicio/Caso`, con sus reenvíos `Caso_N`.
+2. **La carpeta anotada en la columna O.**
+3. Si en las anteriores no hay `.json`, **los links de las columnas C y D** (la copia o el original).
+
+Reglas:
+
+- Trabaja las filas del rango con la columna N vacía o con motivo. Las que tienen links no se tocan.
+- Para una sola fila, "Hasta fila" queda vacío.
+- Tiene unos 15 segundos para consultar Drive (una acción de tarjeta dura 30). Si el rango no alcanza, escribe lo que hizo, avisa desde qué fila falta y deja las casillas listas para presionar otra vez.
+- No reescribe la pestaña "JSON sin fila" ni usa la nota de la búsqueda completa.
+
+Diferencia con la búsqueda completa: esta no ve un `.json` que esté en una carpeta del caso fuera de su ruta normal y sin link en la fila. Para eso están "Buscar JSON" y "Revisar avisos".
 
 ### Trabajo por partes
 

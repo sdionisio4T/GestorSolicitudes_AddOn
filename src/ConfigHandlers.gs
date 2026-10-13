@@ -166,7 +166,7 @@ function onCrearHeaders(e) {
     } else {
       // Wizard completo: caemos directo al menú principal para que el
       // usuario tenga a mano todas las opciones sin pasos intermedios.
-      siguienteCard = buildHomepageCard(null, null, leerFormularioActivo_());
+      siguienteCard = buildInicioSegunHost_(e);
       mensaje = 'Cabeceras creadas. Configuración completa.';
     }
     return CardService.newActionResponseBuilder()
@@ -197,7 +197,7 @@ function onSaltearCrearHeaders(e) {
   if (estadoPostSaltear.paso === 'sin_carpeta' || estadoPostSaltear.paso === 'carpeta_inaccesible') {
     siguienteCard = buildSeleccionCarpetaRaizCard(null);
   } else {
-    siguienteCard = buildHomepageCard(null, null, leerFormularioActivo_());
+    siguienteCard = buildInicioSegunHost_(e);
     mensaje = 'Configuración completa.';
   }
   var responseBuilder = CardService.newActionResponseBuilder()
@@ -285,7 +285,7 @@ function onGuardarCarpetaRaiz(e) {
       .setNavigation(
         CardService.newNavigation()
           .popToRoot()
-          .updateCard(buildHomepageCard(null, null, leerFormularioActivo_()))
+          .updateCard(buildInicioSegunHost_(e))
       )
       .build();
 
