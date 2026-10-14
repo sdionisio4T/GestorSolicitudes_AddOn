@@ -1699,6 +1699,16 @@ function continuarBusquedaJson(e) {
 // filas en segundo plano.
 var INDICE_NOMBRE_MODO = { normal: 'Buscar JSON', revisar: 'Buscar JSON', rango: 'Buscar en filas' };
 
+// Texto que aparece al pasar el cursor sobre cada botón de la tarjeta
+// (texto alternativo del botón): la explicación va aquí y no en la tarjeta.
+var INDICE_AYUDA_BOTONES = {
+  onBuscarJson: 'Revisa todo el Sheet en segundo plano: filas sin links en la columna N',
+  onBuscarRangoJson: 'Revisa solo esas filas, al momento',
+  onVerAvanceBusquedaJson: 'Actualiza la tarjeta y deja lista la parte siguiente',
+  onContinuarBusquedaJson: 'Sigue la búsqueda desde donde quedó',
+  onDetenerBusquedaJson: 'Para la búsqueda; lo ya escrito se queda'
+};
+
 var INDICE_TEXTO_ESTADO_ACTIVADOR = {
   programado: 'programada',
   a_la_hora: 'programada a la hora (Google no dejó antes)',
@@ -1784,6 +1794,7 @@ function buildBusquedaJsonCard_() {
     var b = CardService.newTextButton()
       .setText(texto)
       .setOnClickAction(CardService.newAction().setFunctionName(funcion));
+    if (INDICE_AYUDA_BOTONES[funcion]) b.setAltText(INDICE_AYUDA_BOTONES[funcion]);
     if (principal) b.setTextButtonStyle(CardService.TextButtonStyle.FILLED).setBackgroundColor('#1a73e8');
     botones.addButton(b);
   }
@@ -1804,10 +1815,6 @@ function buildBusquedaJsonCard_() {
 
   var sinEstado = indiceSinEstado_(nota, ahora);
   if (sinEstado) {
-    parrafo('Revisa todo el Sheet: busca los JSON de las filas que no tienen links en la columna <b>N</b> ' +
-      '(vacías o con motivo) y los escribe; si no hay, deja el motivo. Las filas con links no se tocan. ' +
-      'En la columna <b>O</b> pone el link a nuestra carpeta copiada cuando la columna C no lo tiene.<br>' +
-      '<i>Trabaja solo en segundo plano; el avance se ve en la columna N.</i>');
     boton('Buscar JSON', 'onBuscarJson', true);
   } else if (corriendo) {
     var paso;
@@ -1815,8 +1822,7 @@ function buildBusquedaJsonCard_() {
       paso = '🛑 <b>Deteniendo</b>: la parte para en unos segundos y guarda lo hecho.';
     } else if (nota.avance && nota.avance.paso === 'raiz') {
       paso = 'Paso 1 de 2: leyendo la carpeta raíz de Drive, <b>' + nota.avance.carpetas +
-        '</b> carpetas revisadas (actualizado a las ' + formatearHoraIndice_(nota.avance.en) + '). ' +
-        'Si no alcanza en esta parte, la siguiente sigue desde ahí.';
+        '</b> carpetas revisadas (actualizado a las ' + formatearHoraIndice_(nota.avance.en) + ').';
     } else if (nota.avance && nota.avance.paso === 'filas') {
       paso = 'Paso 2 de 2: revisando filas (carpeta raíz leída: ' + nota.avance.carpetas + ' carpetas).';
     } else {
@@ -1829,8 +1835,7 @@ function buildBusquedaJsonCard_() {
     if (!nota.detener) boton('Detener', 'onDetenerBusquedaJson', false);
   } else if (nota.etapa === 'buscando' && cortada) {
     parrafo(rojo('⚠️ <b>La parte ' + nota.partes + ' empezó a las ' + formatearHoraIndice_(nota.parteIniciadaEn) +
-      ' y no terminó</b>: Google la cortó por tiempo antes de guardar.') +
-      '<br>Presiona "Continuar" para seguir desde donde quedó, o "Detener".<br>' + avance);
+      ' y no terminó</b>: Google la cortó por tiempo.') + '<br>' + avance);
     boton('Continuar', 'onContinuarBusquedaJson', true);
     boton('Ver avance', 'onVerAvanceBusquedaJson', false);
     boton('Detener', 'onDetenerBusquedaJson', false);
@@ -1859,8 +1864,7 @@ function buildBusquedaJsonCard_() {
     boton('Ver avance', 'onVerAvanceBusquedaJson', !ofrecerContinuar);
     boton('Detener', 'onDetenerBusquedaJson', false);
   } else if (nota.etapa === 'detenido') {
-    parrafo(rojo('⚠️ <b>La búsqueda se detuvo.</b> ' + escaparHtml(nota.ultimoError || '')) + '<br>' + avance +
-      '<br>Lo ya escrito en las columnas N y O se queda. "Continuar" sigue desde donde quedó.');
+    parrafo(rojo('⚠️ <b>La búsqueda se detuvo.</b> ' + escaparHtml(nota.ultimoError || '')) + '<br>' + avance);
     boton('Continuar', 'onContinuarBusquedaJson', true);
     boton('Ver avance', 'onVerAvanceBusquedaJson', false);
     boton('Buscar JSON', 'onBuscarJson', false);
@@ -1876,7 +1880,7 @@ function buildBusquedaJsonCard_() {
     parrafo(rojo('Último error: ' + escaparHtml(nota.ultimoError)));
   }
   if (nota && !corriendo && nota.etapa !== 'terminado') {
-    parrafo('<i>Esta tarjeta no se refresca sola: usa "Ver avance". El avance también se ve en la columna N.</i>');
+    parrafo('<i>Usa "Ver avance" para actualizar.</i>');
   }
   estado.addWidget(botones);
   card.addSection(estado);
@@ -1890,21 +1894,21 @@ function buildBusquedaJsonCard_() {
     } catch (err) {
       ultimaFilas = null;
     }
-    var desdeInput = CardService.newTextInput().setFieldName('rangoDesde').setTitle('Desde fila');
-    var hastaInput = CardService.newTextInput().setFieldName('rangoHasta').setTitle('Hasta fila');
+    var desdeInput = CardService.newTextInput().setFieldName('rangoDesde').setTitle('Desde fila')
+      .setHint('Ej.: 120');
+    var hastaInput = CardService.newTextInput().setFieldName('rangoHasta').setTitle('Hasta fila')
+      .setHint('Vacío = una sola fila');
     // Si la última no alcanzó a terminar, queda lista para seguir.
     if (ultimaFilas && ultimaFilas.sigue) {
       desdeInput.setValue(String(ultimaFilas.sigue.desde));
       hastaInput.setValue(String(ultimaFilas.sigue.hasta));
     }
     var seccionFilas = CardService.newCardSection()
-      .setHeader('Buscar solo en algunas filas')
-      .addWidget(CardService.newTextParagraph().setText(
-        'Revisa al momento las filas indicadas que no tienen links en la columna N (vacías o con motivo), ' +
-        'yendo directo a las carpetas de cada fila. Para una sola fila, deja "Hasta fila" vacío.'))
+      .setHeader('Buscar en filas')
       .addWidget(desdeInput)
       .addWidget(hastaInput)
       .addWidget(CardService.newTextButton().setText('Buscar en filas')
+        .setAltText(INDICE_AYUDA_BOTONES.onBuscarRangoJson)
         .setOnClickAction(CardService.newAction().setFunctionName('onBuscarRangoJson')));
     if (ultimaFilas && ultimaFilas.texto && ahora - ultimaFilas.en < INDICE_CONFIG.RESUMEN_VIGENTE_MS) {
       seccionFilas.addWidget(CardService.newTextParagraph().setText(
