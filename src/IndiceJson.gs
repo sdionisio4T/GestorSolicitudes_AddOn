@@ -1699,8 +1699,8 @@ function continuarBusquedaJson(e) {
 // filas en segundo plano.
 var INDICE_NOMBRE_MODO = { normal: 'Buscar JSON', revisar: 'Buscar JSON', rango: 'Buscar en filas' };
 
-// Texto que aparece al pasar el cursor sobre cada botón de la tarjeta
-// (texto alternativo del botón): la explicación va aquí y no en la tarjeta.
+// Texto alternativo de cada botón de la tarjeta, para lectores de pantalla.
+// Las tarjetas de los add-ons no lo muestran al pasar el cursor.
 var INDICE_AYUDA_BOTONES = {
   onBuscarJson: 'Revisa todo el Sheet en segundo plano: filas sin links en la columna N',
   onBuscarRangoJson: 'Revisa solo esas filas, al momento',
@@ -1804,6 +1804,11 @@ function buildBusquedaJsonCard_() {
   function rojo(html) {
     return '<font color="#d93025">' + html + '</font>';
   }
+  // Línea corta en gris que explica el botón de arriba.
+  function explicacion(texto) {
+    return CardService.newTextParagraph().setText('<font color="#5f6368">' + texto + '</font>');
+  }
+  var explicaBuscar = false;
 
   var cortada = indiceParteCortada_(nota, ahora);
   var corriendo = !!(nota && nota.ocupadoHasta > ahora) && !cortada;
@@ -1816,6 +1821,7 @@ function buildBusquedaJsonCard_() {
   var sinEstado = indiceSinEstado_(nota, ahora);
   if (sinEstado) {
     boton('Buscar JSON', 'onBuscarJson', true);
+    explicaBuscar = true;
   } else if (corriendo) {
     var paso;
     if (nota.detener) {
@@ -1872,6 +1878,7 @@ function buildBusquedaJsonCard_() {
     parrafo('✅ <b>' + INDICE_NOMBRE_MODO[nota.modo] + ' terminó el ' + formatearFechaIndice_(nota.terminadoEn) +
       '</b>, en ' + nota.partes + ' parte' + (nota.partes === 1 ? '' : 's') + '.');
     boton('Buscar JSON', 'onBuscarJson', true);
+    explicaBuscar = true;
   }
 
   var resumen = sinEstado ? '' : indiceTextoCuenta_(nota.cuenta);
@@ -1883,6 +1890,7 @@ function buildBusquedaJsonCard_() {
     parrafo('<i>Usa "Ver avance" para actualizar.</i>');
   }
   estado.addWidget(botones);
+  if (explicaBuscar) estado.addWidget(explicacion('Revisa todo el Sheet. Puede tardar unos minutos.'));
   card.addSection(estado);
 
   // Búsqueda por filas: solo cuando no hay otra búsqueda en curso.
@@ -1895,7 +1903,7 @@ function buildBusquedaJsonCard_() {
       ultimaFilas = null;
     }
     var desdeInput = CardService.newTextInput().setFieldName('rangoDesde').setTitle('Desde fila')
-      .setHint('Ej.: 120');
+      .setHint('Por ejemplo, 120');
     var hastaInput = CardService.newTextInput().setFieldName('rangoHasta').setTitle('Hasta fila')
       .setHint('Vacío = una sola fila');
     // Si la última no alcanzó a terminar, queda lista para seguir.
@@ -1909,7 +1917,8 @@ function buildBusquedaJsonCard_() {
       .addWidget(hastaInput)
       .addWidget(CardService.newTextButton().setText('Buscar en filas')
         .setAltText(INDICE_AYUDA_BOTONES.onBuscarRangoJson)
-        .setOnClickAction(CardService.newAction().setFunctionName('onBuscarRangoJson')));
+        .setOnClickAction(CardService.newAction().setFunctionName('onBuscarRangoJson')))
+      .addWidget(explicacion('Para revisar una o pocas filas. Responde al momento.'));
     if (ultimaFilas && ultimaFilas.texto && ahora - ultimaFilas.en < INDICE_CONFIG.RESUMEN_VIGENTE_MS) {
       seccionFilas.addWidget(CardService.newTextParagraph().setText(
         '<i>Última (' + formatearFechaIndice_(ultimaFilas.en) + '): ' + escaparHtml(ultimaFilas.texto) + '</i>'));
