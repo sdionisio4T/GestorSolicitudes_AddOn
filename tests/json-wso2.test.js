@@ -58,7 +58,19 @@ function driveFalso(items) {
         const it = buscar(id);
         if (!it || it.sinAcceso) throw new Error('File not found: ' + id);
         if (op && op.fields === 'description') return { description: it.descripcion || '' };
-        return { id: it.id, name: it.name, parents: [it.padre], modifiedTime: it.modifiedTime, md5Checksum: it.md5Checksum };
+        return { id: it.id, name: it.name, parents: [it.padre], trashed: !!it.papelera, modifiedTime: it.modifiedTime, md5Checksum: it.md5Checksum };
+      },
+      create: (r) => {
+        const nueva = { id: nuevoId(), name: r.name, mimeType: r.mimeType, padre: r.parents[0] };
+        items.push(nueva);
+        return { id: nueva.id };
+      },
+      copy: (r, id) => {
+        const it = buscar(id);
+        if (!it || it.sinAcceso) throw new Error('Sin acceso');
+        const copia = { ...it, id: nuevoId(), name: r.name, padre: r.parents[0], descripcion: r.description || '' };
+        items.push(copia);
+        return { id: copia.id };
       },
       list: (p) => {
         const padre = /^'([^']+)' in parents/.exec(p.q)[1];
@@ -161,7 +173,7 @@ test('copiar al caso: mismo nombre con otro contenido, reemplaza solo si es mas 
   assert.strictEqual(copia().contenido, 'c-B', 'uno mas viejo no reemplaza');
 });
 
-test('copiar al caso: sin tiempo o sin acceso quedan pendientes', () => {
+test('copiar al caso: sin tiempo queda pendiente; sin acceso, fallido', () => {
   const d = driveFalso([
     { id: RAIZ, name: 'Raiz', mimeType: CARP, padre: 'mi' },
     json('j1', 'a.json', 'otra', 'A', '2026-09-01'),
@@ -173,10 +185,13 @@ test('copiar al caso: sin tiempo o sin acceso quedan pendientes', () => {
     { id: ID('j2'), nombre: 'b.json', modificado: '2026-09-01', md5: 'B' }
   ];
   const conAcceso = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', archivos, sinLimite));
-  assert.deepStrictEqual(conAcceso.pendientes, [ID('j2')]);
+  // Sin acceso es un error (fallidos); sin tiempo, solo queda pendiente.
+  assert.deepStrictEqual(conAcceso.fallidos, [ID('j2')]);
+  assert.deepStrictEqual(conAcceso.pendientes, []);
   assert.strictEqual(conAcceso.carpeta.total, 1);
   const sinTiempo = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '7799', archivos, () => 0));
   assert.deepStrictEqual(sinTiempo.pendientes, [ID('j1'), ID('j2')]);
+  assert.deepStrictEqual(sinTiempo.fallidos, []);
   assert.strictEqual(sinTiempo.carpeta.total, 0);
   assert.strictEqual(gs.jsonWso2CopiarAlCaso_(RAIZ, 'abc', archivos, sinLimite), null);
 });
@@ -413,4 +428,25 @@ test('textos de la seccion Activadores', () => {
   assert.ok(t({ etapa: 'buscando', activador: { estado: 'sin_cupo', en: ahora, desde: 'activador' } }, 0, 20)
     .includes('hay demasiadas tareas programadas'));
   assert.strictEqual(t(null, 0, -1), 'No se pudieron leer las tareas programadas.');
+});
+
+test('copiar varias filas con la misma memoria: no repite consultas a JSON-WSO2', () => {
+  const d = driveFalso([
+    { id: RAIZ, name: 'Raiz', mimeType: CARP, padre: 'mi' },
+    json('a', 'a.json', 'otra', 'A', '2026-09-01'),
+    json('b', 'b.json', 'otra', 'B', '2026-09-01')
+  ]);
+  instalar(d);
+  let listados = 0;
+  const listar = d.Drive.Files.list;
+  d.Drive.Files.list = (p) => { listados++; return listar(p); };
+  const memo = gs.jsonWso2NuevaMemoria_();
+  const a = (id, n) => [{ id: ID(id), nombre: n, ruta: [], modificado: '2026-09-01', md5: id.toUpperCase() }];
+  gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', a('a', 'a.json'), sinLimite, memo);
+  const primera = listados;
+  const r = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', a('b', 'b.json'), sinLimite, memo));
+  assert.strictEqual(listados, primera, 'la segunda fila del caso no vuelve a listar nada');
+  assert.strictEqual(r.carpeta.total, 2);
+  // La copia lleva su descripcion en la misma consulta.
+  assert.ok(d.items.find((i) => i.name === 'b.json' && i.padre !== 'otra').descripcion.startsWith('Copia de '));
 });

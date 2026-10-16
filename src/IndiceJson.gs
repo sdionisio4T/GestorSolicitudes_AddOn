@@ -450,7 +450,7 @@ function indiceResultadoDesdeWso2_(resultado, caso, casosWso2) {
   var numero = indiceNormalizarCaso_(caso);
   var carpeta = numero && casosWso2 ? casosWso2[numero] : null;
   if (!carpeta) return resultado;
-  var total = Object.keys(jsonWso2JsonBajo_(carpeta.id)).length;
+  var total = Object.keys(jsonWso2JsonBajo_(carpeta.id).jsons).length;
   if (total === 0) return resultado;
   return {
     links: [carpeta.url],
@@ -1605,6 +1605,8 @@ function indicePasarJson_(sheetId, presupuestoMs, margenMs) {
   var detenido = false;
   var bloque = [];
   var ultimoAviso = Date.now();
+  // Carpetas ya consultadas en esta parte, para no repetir consultas entre filas.
+  var memoWso2 = jsonWso2NuevaMemoria_();
   var escribirBloque = function() {
     if (bloque.length === 0) return true;
     for (var intento = 0; intento < INDICE_BUSQUEDA.REINTENTOS_LOCK; intento++) {
@@ -1654,19 +1656,25 @@ function indicePasarJson_(sheetId, presupuestoMs, margenMs) {
         indiceGuardarNota_(sheetId, nota);
       }
 
-      var leidos = jsonWso2LeerArchivos_(jsonWso2IdsDeUrls_(celda.links), f.caso, f.ids);
+      var leidos = jsonWso2LeerArchivos_(jsonWso2IdsDeUrls_(celda.links), f.caso, f.ids, memoWso2);
       var copia = leidos.archivos.length > 0
         ? jsonWso2CopiarAlCaso_(raizId, f.caso, leidos.archivos, function() {
           return quedaMs() - margen;
-        })
+        }, memoWso2)
         : null;
+      // Se acabó el tiempo a mitad de la fila: la fila sigue en la parte
+      // siguiente (lo que ya se copió no se vuelve a copiar). No es un error.
+      if (copia && copia.pendientes.length > 0) {
+        cortado = true;
+        break;
+      }
       if (!copia || copia.carpeta.total === 0) {
         cuenta.noCopiados = (cuenta.noCopiados || 0) + 1;
         continue;
       }
-      // Quedan en la celda los links que no se copiaron (sin tiempo, sin
-      // acceso o que no son .json).
-      var sinCopiar = copia.pendientes.concat(leidos.noLeidos);
+      // Quedan en la celda los links que no se pudieron copiar (sin acceso
+      // o que no son .json).
+      var sinCopiar = copia.fallidos.concat(leidos.noLeidos);
       var urlsSinCopiar = celda.links.filter(function(u) {
         var id = jsonWso2IdsDeUrls_([u])[0];
         return !id || sinCopiar.indexOf(id) !== -1;
@@ -1967,6 +1975,8 @@ var INDICE_NOMBRE_MODO = {
 var INDICE_AYUDA_BOTONES = {
   onBuscarJson: 'Revisa todo el Sheet. Puede tardar unos minutos.',
   onBuscarRangoJson: 'Para revisar una o pocas filas. Responde al momento.',
+  onDescartarFilasJson: 'Continuar sigue con las filas que faltaron. Descartar lo olvida; lo ya escrito se queda.',
+  onCancelarBusquedaJson: 'Olvida esta búsqueda a medias. Lo ya escrito en las columnas N y O se queda.',
   onPasarJsonWso2: 'Copia a JSON-WSO2 los JSON que ya están en la columna N y deja el link a la carpeta del caso.',
   onVerAvanceBusquedaJson: 'Actualiza la tarjeta y deja lista la parte siguiente',
   onContinuarBusquedaJson: 'Sigue la búsqueda desde donde quedó',
@@ -2128,7 +2138,9 @@ function buildBusquedaJsonCard_() {
 
   var cortada = indiceParteCortada_(nota, ahora);
   var corriendo = !!(nota && nota.ocupadoHasta > ahora) && !cortada;
-  var avance = nota && nota.partes > 0
+  var avance = nota && nota.modo === 'pasar'
+    ? '<b>' + ((nota.cuenta && nota.cuenta.pasadas) || 0) + ' de ' + (nota.porPasarTotal || '?') + '</b> filas pasadas a JSON-WSO2'
+    : nota && nota.partes > 0
     ? 'Va en la fila <b>' + (nota.filaActual || 0) + '</b> de ' + (nota.ultimaFila || '?') +
       ' · parte ' + nota.partes + ' · ' + INDICE_NOMBRE_MODO[nota.modo] +
       (nota.mapaCarpetas ? '<br>Mapa del Drive: ' + nota.mapaCarpetas + ' carpetas leídas' : '')
@@ -2185,7 +2197,7 @@ function buildBusquedaJsonCard_() {
       ' y no terminó</b>: Google la cortó por tiempo.') + '<br>' + avance);
     boton('Continuar', 'onContinuarBusquedaJson', true);
     boton('Ver avance', 'onVerAvanceBusquedaJson', false);
-    boton('Detener', 'onDetenerBusquedaJson', false);
+    boton('Cancelar búsqueda', 'onCancelarBusquedaJson', false);
   } else if (nota.etapa === 'buscando') {
     var act = nota.activador;
     var texto;
@@ -2209,12 +2221,12 @@ function buildBusquedaJsonCard_() {
     parrafo(texto + '<br>' + avance);
     if (ofrecerContinuar) boton('Continuar', 'onContinuarBusquedaJson', true);
     boton('Ver avance', 'onVerAvanceBusquedaJson', !ofrecerContinuar);
-    boton('Detener', 'onDetenerBusquedaJson', false);
+    if (ofrecerContinuar) boton('Cancelar búsqueda', 'onCancelarBusquedaJson', false);
+    else boton('Detener', 'onDetenerBusquedaJson', false);
   } else if (nota.etapa === 'detenido') {
     parrafo(rojo('⚠️ <b>La búsqueda se detuvo.</b> ' + escaparHtml(nota.ultimoError || '')) + '<br>' + avance);
     boton('Continuar', 'onContinuarBusquedaJson', true);
-    boton('Ver avance', 'onVerAvanceBusquedaJson', false);
-    boton('Buscar JSON', 'onBuscarJson', false);
+    boton('Cancelar búsqueda', 'onCancelarBusquedaJson', false);
   } else {
     parrafo('✅ <b>' + INDICE_NOMBRE_MODO[nota.modo] + ' terminó el ' + formatearFechaIndice_(nota.terminadoEn) +
       '</b>, en ' + nota.partes + ' parte' + (nota.partes === 1 ? '' : 's') + '.');
@@ -2246,21 +2258,29 @@ function buildBusquedaJsonCard_() {
       .setHint('Por ejemplo, 120');
     var hastaInput = CardService.newTextInput().setFieldName('rangoHasta').setTitle('Hasta fila')
       .setHint('Vacío = una sola fila');
-    // Si la última no alcanzó a terminar, queda lista para seguir.
-    if (ultimaFilas && ultimaFilas.sigue) {
-      desdeInput.setValue(String(ultimaFilas.sigue.desde));
-      hastaInput.setValue(String(ultimaFilas.sigue.hasta));
+    // Si la última no alcanzó a terminar: lo dice, deja las casillas con lo
+    // que falta y el botón pasa a "Continuar" (o "Descartar" para olvidarlo).
+    var sigue = ultimaFilas && ultimaFilas.sigue;
+    var seccionFilas = CardService.newCardSection().setHeader('Buscar en filas');
+    if (sigue) {
+      desdeInput.setValue(String(sigue.desde));
+      hastaInput.setValue(String(sigue.hasta));
+      seccionFilas.addWidget(CardService.newTextParagraph().setText(
+        '⚠️ <b>Faltaron las ' + indiceTextoRango_(sigue) + '.</b>'));
     }
-    var seccionFilas = CardService.newCardSection()
-      .setHeader('Buscar en filas')
-      .addWidget(desdeInput)
-      .addWidget(hastaInput)
-      .addWidget(CardService.newButtonSet()
-        .addButton(CardService.newTextButton().setText('Buscar en filas')
-          .setAltText(INDICE_AYUDA_BOTONES.onBuscarRangoJson)
-          .setOnClickAction(CardService.newAction().setFunctionName('onBuscarRangoJson')))
-        .addButton(indiceBotonAyuda_('onBuscarRangoJson')));
-    if (ultimaFilas && ultimaFilas.texto && ahora - ultimaFilas.en < INDICE_CONFIG.RESUMEN_VIGENTE_MS) {
+    var botonesFilas = CardService.newButtonSet()
+      .addButton(CardService.newTextButton().setText(sigue ? 'Continuar' : 'Buscar en filas')
+        .setAltText(INDICE_AYUDA_BOTONES.onBuscarRangoJson)
+        .setTextButtonStyle(sigue ? CardService.TextButtonStyle.FILLED : CardService.TextButtonStyle.OUTLINED)
+        .setOnClickAction(CardService.newAction().setFunctionName('onBuscarRangoJson')));
+    if (sigue) {
+      botonesFilas.addButton(CardService.newTextButton().setText('Descartar')
+        .setAltText(INDICE_AYUDA_BOTONES.onDescartarFilasJson)
+        .setOnClickAction(CardService.newAction().setFunctionName('onDescartarFilasJson')));
+    }
+    botonesFilas.addButton(indiceBotonAyuda_(sigue ? 'onDescartarFilasJson' : 'onBuscarRangoJson'));
+    seccionFilas.addWidget(desdeInput).addWidget(hastaInput).addWidget(botonesFilas);
+    if (!sigue && ultimaFilas && ultimaFilas.texto && ahora - ultimaFilas.en < INDICE_CONFIG.RESUMEN_VIGENTE_MS) {
       seccionFilas.addWidget(CardService.newTextParagraph().setText(
         '<i>Última (' + formatearFechaIndice_(ultimaFilas.en) + '): ' + escaparHtml(ultimaFilas.texto) + '</i>'));
     }
@@ -2512,7 +2532,7 @@ function indiceTextoResultadoFilas_(rango, res) {
   if (c.cambiaron) partes.push(c.cambiaron + ' saltada(s) porque cambiaron');
   var texto = donde + ': ' + (partes.length ? partes.join(', ') : 'sin cambios') + '.';
   if (res.faltaDesde) {
-    texto += ' No alcanzó el tiempo: falta desde la fila ' + res.faltaDesde + '; presiona otra vez para seguir.';
+    texto += ' No alcanzó el tiempo: falta desde la fila ' + res.faltaDesde + '; presiona "Continuar".';
   }
   return texto;
 }
@@ -2775,6 +2795,62 @@ function onBuscarRangoJson(e) {
   } catch (err) {
     console.error('[Indice] ' + err.message);
     aviso = 'No se pudo buscar en esas filas: ' + err.message;
+  }
+  return indiceRespuestaBusqueda_(aviso);
+}
+
+/**
+ * "Descartar" en "Buscar en filas": olvida las filas que faltaron y la
+ * sección vuelve a "Buscar en filas" con las casillas vacías.
+ */
+function onDescartarFilasJson(e) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var clave = INDICE_FILAS.PREFIJO + obtenerSheetId();
+    var ultima = JSON.parse(props.getProperty(clave) || 'null');
+    if (ultima) {
+      ultima.sigue = null;
+      props.setProperty(clave, JSON.stringify(ultima));
+    }
+  } catch (err) {
+    console.warn('[Indice] No se pudo descartar la búsqueda por filas: ' + err.message);
+  }
+  return indiceRespuestaBusqueda_('Listo. Lo ya escrito se queda.');
+}
+
+/**
+ * "Cancelar búsqueda": olvida una búsqueda (o un "Pasar") a medias: borra
+ * su nota, su tarea programada y el mapa de la caché. La tarjeta vuelve al
+ * inicio. Lo ya escrito en las columnas N y O no se toca.
+ */
+function onCancelarBusquedaJson(e) {
+  var aviso;
+  var lock = LockService.getScriptLock();
+  var conLock = false;
+  try {
+    var sheetId = obtenerSheetId();
+    var nota = indiceLeerNota_(sheetId);
+    var ahora = Date.now();
+    if (!nota || nota.etapa === 'terminado') {
+      aviso = 'No hay una búsqueda a medias.';
+    } else if (nota.ocupadoHasta > ahora && !indiceParteCortada_(nota, ahora)) {
+      aviso = 'Hay una parte corriendo. Presiona "Detener", espera unos segundos y vuelve a intentar.';
+    } else {
+      conLock = lock.tryLock(10000);
+      if (!conLock) throw new Error('el Sheet está ocupado, intenta en unos segundos.');
+      ScriptApp.getProjectTriggers().forEach(function(t) {
+        if (t.getHandlerFunction() === INDICE_BUSQUEDA.HANDLER) ScriptApp.deleteTrigger(t);
+      });
+      indiceBorrarMapa_(sheetId);
+      PropertiesService.getScriptProperties().deleteProperty(INDICE_BUSQUEDA.PREFIJO_NOTA + sheetId);
+      console.log('[Indice] Búsqueda cancelada (' + nota.modo + ')');
+      aviso = 'Búsqueda cancelada. Lo ya escrito en las columnas N y O se queda.';
+    }
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo cancelar: ' + err.message;
+  } finally {
+    if (conLock) lock.releaseLock();
   }
   return indiceRespuestaBusqueda_(aviso);
 }

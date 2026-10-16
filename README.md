@@ -172,6 +172,7 @@ Cualquier línea de la columna N que no sea una URL se toma como motivo. Las cel
 | Ver avance | Refresca la tarjeta y deja lista la parte siguiente (ver abajo). |
 | Continuar | Sigue una búsqueda que quedó a medias. |
 | Detener | Para la búsqueda; lo ya escrito se conserva. |
+| Cancelar búsqueda | Aparece junto a "Continuar" cuando una búsqueda (o un "Pasar") quedó a medias o detenida. La olvida y la tarjeta vuelve al inicio; lo ya escrito en las columnas N y O se queda. |
 | Pasar JSON a JSON-WSO2 | Aparece arriba solo si hay filas con links a archivos JSON en la columna N. Copia esos JSON a `JSON-WSO2/<caso>/` y cambia la celda por el link a la carpeta. Primero dentro del clic; lo que falte, en segundo plano por partes. |
 
 La tarjeta tiene poco texto a propósito. Junto a "Buscar JSON", "Buscar en filas" y "Pasar JSON a JSON-WSO2" hay un ícono ⓘ: al pasar el cursor muestra para qué sirve el botón, y con un clic muestra lo mismo como aviso. Las casillas tienen una pista debajo ("Por ejemplo, 120" y "Vacío = una sola fila").
@@ -190,7 +191,7 @@ Reglas:
 
 - Trabaja las filas del rango con la columna N vacía o con motivo. Las que tienen links no se tocan.
 - Para una sola fila, "Hasta fila" queda vacío.
-- Tiene unos 15 segundos para consultar Drive (una acción de tarjeta dura 30). Si el rango no alcanza, escribe lo que hizo, avisa desde qué fila falta y deja las casillas listas para presionar otra vez.
+- Tiene unos 15 segundos para consultar Drive (una acción de tarjeta dura 30). Si el rango no alcanza, escribe lo que hizo y la sección muestra "⚠️ Faltaron las filas X a Y" con las casillas llenas y dos botones: **Continuar** (sigue con las que faltaron) y **Descartar** (lo olvida; lo ya escrito se queda).
 - No reescribe la pestaña "JSON sin fila" ni usa la nota de la búsqueda completa.
 
 Diferencia con la búsqueda completa: esta no ve un `.json` que esté en una carpeta del caso fuera de su ruta normal y sin link en la fila. Para eso está "Buscar JSON".

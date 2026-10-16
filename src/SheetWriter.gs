@@ -1068,17 +1068,20 @@ function agregarJsonAFilas_(sheet, filas, jsonUrls) {
     try {
       var raizId = obtenerCarpetaRaizId();
       var ids = jsonWso2IdsDeUrls_(jsonUrls);
+      var memoWso2 = jsonWso2NuevaMemoria_();
       filas.forEach(function(row) {
         var caso = String(sheet.getRange(row, SHEET_COLS.NUMERO_CASO).getValue() || '').trim();
         if (!caso || copiaPorCaso[caso] !== undefined) return;
         // El camino de cada JSON se toma desde la carpeta del caso que
         // creó el envío (<Servicio>/<Caso>/...).
-        var leidos = quedaMs() > 0 ? jsonWso2LeerArchivos_(ids, caso, []) : { archivos: [], noLeidos: [] };
+        var leidos = quedaMs() > 0 ? jsonWso2LeerArchivos_(ids, caso, [], memoWso2) : { archivos: [], noLeidos: [] };
         copiaPorCaso[caso] = leidos.archivos.length > 0 && quedaMs() > 0
-          ? jsonWso2CopiarAlCaso_(raizId, caso, leidos.archivos, quedaMs)
+          ? jsonWso2CopiarAlCaso_(raizId, caso, leidos.archivos, quedaMs, memoWso2)
           : null;
         if (copiaPorCaso[caso]) {
-          copiaPorCaso[caso].pendientes = copiaPorCaso[caso].pendientes.concat(leidos.noLeidos);
+          // Sin copiar (por tiempo, error o sin acceso): quedan como links.
+          copiaPorCaso[caso].pendientes = copiaPorCaso[caso].pendientes
+            .concat(copiaPorCaso[caso].fallidos, leidos.noLeidos);
         }
       });
     } catch (errCopia) {
