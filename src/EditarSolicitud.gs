@@ -739,6 +739,8 @@ function onAbrirEditar(e) {
 }
 
 function onGuardarEdicion(e) {
+  // Para saber cuánto le queda a la acción al copiar los JSON a JSON-WSO2.
+  jsonWso2MarcarInicioAccion_();
   var envioId = e && e.parameters && e.parameters.envioId;
   var messageId = (e && e.parameters && e.parameters.messageId) || '';
   var formInputs = (e && e.commonEventObject && e.commonEventObject.formInputs) || {};

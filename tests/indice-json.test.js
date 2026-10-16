@@ -689,7 +689,7 @@ test('esperar turno: una parte que arranca antes espera a que termine la anterio
     gs.Utilities = { sleep: (ms) => { reloj += ms; } };
     assert.strictEqual(gs.indiceEsperarTurno_('X'), gs.INDICE_BUSQUEDA.ESPERA_TURNO_MS);
   } finally {
-    gs.Date = DateReal;
+    if (DateReal) gs.Date = DateReal; else delete gs.Date;
     gs.Utilities = UtilitiesReal;
   }
 });

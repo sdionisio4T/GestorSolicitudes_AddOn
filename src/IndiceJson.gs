@@ -380,8 +380,9 @@ function indiceCadenaContiene_(desdeId, buscadoId, arbol) {
  * se revisaron: { estados: { id: 'carpeta' | 'json' | 'sin_acceso' | 'otro' },
  *                 carpetas: { id: [nombre, padre] }, jsons: [[id, nombre, padre, mod, md5]] }
  *
- * Devuelve { links: [url], motivo: texto o null, fuente }, o { pendiente }
- * si la fila tiene originales que todavía no se revisaron.
+ * Devuelve { links: [url], jsons: [{ id, nombre, modificado, md5 }], motivo:
+ * texto o null, fuente }, o { pendiente } si la fila tiene originales que
+ * todavía no se revisaron.
  */
 function indiceResultadoFila_(fila, arbol, directorio, originales) {
   var caso = indiceNormalizarCaso_(fila.caso);
@@ -390,7 +391,7 @@ function indiceResultadoFila_(fila, arbol, directorio, originales) {
   if (entrada && entrada.carpetas.length > 0) {
     var delCaso = indiceJsonDelCaso_(entrada);
     if (delCaso.length > 0) {
-      return { links: delCaso.map(function(j) { return indiceUrlArchivo_(j.id); }), motivo: null, fuente: 'caso' };
+      return { links: delCaso.map(function(j) { return indiceUrlArchivo_(j.id); }), jsons: delCaso, motivo: null, fuente: 'caso' };
     }
     return { links: [], motivo: INDICE_MOTIVOS.carpeta_sin_json, fuente: 'caso' };
   }
@@ -427,7 +428,7 @@ function indiceResultadoFila_(fila, arbol, directorio, originales) {
 
   var unicos = indiceQuitarRepetidos_(encontrados);
   if (unicos.length > 0) {
-    return { links: unicos.map(function(j) { return indiceUrlArchivo_(j.id); }), motivo: null, fuente: 'links' };
+    return { links: unicos.map(function(j) { return indiceUrlArchivo_(j.id); }), jsons: unicos, motivo: null, fuente: 'links' };
   }
   var motivo;
   if (hayNuestra) motivo = INDICE_MOTIVOS.carpeta_sin_json;
@@ -435,6 +436,23 @@ function indiceResultadoFila_(fila, arbol, directorio, originales) {
   else if (hayOriginalLeido) motivo = INDICE_MOTIVOS.original_sin_json;
   else motivo = INDICE_MOTIVOS.sin_carpeta_ni_link;
   return { links: [], motivo: motivo, fuente: 'links' };
+}
+
+/**
+ * Copia a JSON-WSO2 los JSON de un resultado con links y le agrega la celda
+ * con la carpeta del caso (más los links que no alcanzaron a copiarse). Si
+ * no se copió ninguno, el resultado queda con sus links a archivos y la
+ * fila aparece en "Pasar JSON a JSON-WSO2".
+ */
+function indiceCopiarResultadoAWso2_(resultado, caso, raizId, quedaMs, cuenta) {
+  if (!resultado || !resultado.jsons || resultado.jsons.length === 0) return;
+  var copia = jsonWso2CopiarAlCaso_(raizId, caso, resultado.jsons, quedaMs);
+  if (!copia || copia.carpeta.total === 0) {
+    cuenta.noCopiados = (cuenta.noCopiados || 0) + 1;
+    return;
+  }
+  if (copia.pendientes.length > 0) cuenta.noCopiados = (cuenta.noCopiados || 0) + 1;
+  resultado.celda = jsonWso2Celda_(copia.carpeta, copia.pendientes.map(indiceUrlArchivo_));
 }
 
 // ── Recorrido de Drive ────────────────────────────────────────────────
@@ -570,17 +588,27 @@ function indiceEsLineaLink_(linea) {
 
 /**
  * Separa el contenido de una celda de la columna N en links (líneas que
- * son una URL) y motivos (cualquier otra línea con texto).
+ * son una URL), carpetas (la línea "JSON-WSO2/<caso> (<n> JSON)") y
+ * motivos (cualquier otra línea con texto).
  */
 function indiceAnalizarCeldaN_(texto) {
-  var res = { links: [], motivos: [] };
+  var res = { links: [], carpetas: [], motivos: [] };
   String(texto == null ? '' : texto).split('\n').forEach(function(linea) {
     var l = linea.trim();
     if (!l) return;
     if (indiceEsLineaLink_(l)) res.links.push(l);
+    else if (jsonWso2EsLineaCarpeta_(l)) res.carpetas.push(l);
     else res.motivos.push(l);
   });
   return res;
+}
+
+/**
+ * ¿La celda N ya tiene sus JSON? Con links a archivos o con la carpeta de
+ * JSON-WSO2.
+ */
+function indiceCeldaConJson_(celda) {
+  return celda.links.length > 0 || celda.carpetas.length > 0;
 }
 
 /**
@@ -588,11 +616,13 @@ function indiceAnalizarCeldaN_(texto) {
  *   vacía                → escribir el resultado (links o motivo)
  *   solo links           → no tocar
  *   links y motivo       → limpiar: dejar solo los links
+ *   carpeta de JSON-WSO2 → no tocar
  *   solo motivo          → no tocar, salvo al revisar avisos
  * Devuelve { accion: 'escribir' | 'limpiar' | 'nada', texto, tipo }.
  */
 function indiceDecidirCeldaN_(textoActual, resultado, revisarAvisos) {
   var actual = indiceAnalizarCeldaN_(textoActual);
+  if (actual.carpetas.length > 0) return { accion: 'nada', tipo: 'yaTenia' };
   if (actual.links.length > 0 && actual.motivos.length > 0) {
     return { accion: 'limpiar', texto: actual.links.join('\n'), tipo: 'limpiada' };
   }
@@ -631,9 +661,11 @@ function indiceCeldaCarpeta_(carpetaDeFila) {
  * (alguien ordenó o insertó filas) se salta. La columna O solo se escribe
  * si está vacía. Devuelve false si no consiguió el lock.
  *
- * bloque: [{ fila, caso, servicio, resultado, carpeta, soloCarpeta }]
- *   ordenado por fila, con resultado de indiceResultadoFila_ y carpeta de
- *   indiceCarpetaDeFila_. Con soloCarpeta la columna N no se mira.
+ * bloque: [{ fila, caso, servicio, resultado, carpeta, soloCarpeta, celdaPasada }]
+ *   ordenado por fila, con resultado de indiceResultadoFila_ (con celda si
+ *   sus JSON ya se copiaron a JSON-WSO2) y carpeta de indiceCarpetaDeFila_.
+ *   Con soloCarpeta la columna N no se mira. celdaPasada es la celda nueva
+ *   de "Pasar JSON a JSON-WSO2".
  */
 function indiceEscribirBloqueFilas_(ss, bloque, cuenta, revisarAvisos) {
   var lock = LockService.getScriptLock();
@@ -665,10 +697,21 @@ function indiceEscribirBloqueFilas_(ss, bloque, cuenta, revisarAvisos) {
         cuenta.cambiaron = (cuenta.cambiaron || 0) + 1;
         return;
       }
-      if (!t.soloCarpeta) {
+      if (t.celdaPasada) {
+        // "Pasar JSON a JSON-WSO2": solo si la celda sigue con links a
+        // archivos (nadie la cambió mientras se copiaba).
+        if (indiceAnalizarCeldaN_(columnaN[i][0]).links.length > 0) {
+          cambiosN.push({ fila: t.fila, valor: t.celdaPasada });
+          cuenta.pasadas = (cuenta.pasadas || 0) + 1;
+        }
+      } else if (!t.soloCarpeta) {
         var decision = indiceDecidirCeldaN_(columnaN[i][0], t.resultado, revisarAvisos);
         if (decision.accion !== 'nada') {
-          cambiosN.push({ fila: t.fila, valor: construirCeldaConEnlaces(decision.texto) });
+          // Links con su copia en JSON-WSO2: se escribe la carpeta del caso.
+          var valor = decision.tipo === 'links' && t.resultado.celda
+            ? t.resultado.celda
+            : construirCeldaConEnlaces(decision.texto);
+          cambiosN.push({ fila: t.fila, valor: valor });
         }
         cuenta[decision.tipo] = (cuenta[decision.tipo] || 0) + 1;
       }
@@ -1012,8 +1055,8 @@ function indiceElegirFilas_(filas, desdeFila, carpetaDe) {
   var lista = [];
   filas.forEach(function(f) {
     var celda = indiceAnalizarCeldaN_(f.textoN);
-    var mixta = celda.links.length > 0 && celda.motivos.length > 0;
-    var necesitaN = celda.links.length === 0 && f.fila >= (desdeFila || 0);
+    var mixta = celda.links.length > 0 && celda.motivos.length > 0 && celda.carpetas.length === 0;
+    var necesitaN = !indiceCeldaConJson_(celda) && f.fila >= (desdeFila || 0);
     var carpeta = carpetaDe ? carpetaDe(f) : null;
     var necesitaO = !!(carpeta && carpeta.carpetas.length > 0 && !String(f.textoO).trim());
     if (!necesitaN && !mixta && !necesitaO) return;
@@ -1046,6 +1089,10 @@ function indiceArbolDeUnidad_(raizId, driveId, carpetasUnidad, archivosUnidad) {
     datos[f.id] = [f.name, (f.parents || [])[0] || ''];
   });
   var cuelga = {};
+  // La carpeta JSON-WSO2 de la raíz tiene copias: no se recorre.
+  Object.keys(datos).forEach(function(id) {
+    if (datos[id][0] === JSON_WSO2.CARPETA && datos[id][1] === raizId) cuelga[id] = false;
+  });
   function cuelgaDeRaiz(id) {
     var camino = [];
     var actual = id;
@@ -1196,6 +1243,8 @@ function indiceRecorrerRaiz_(raizId, quedaMs, alAvanzar, parcial) {
     }
     hijos.forEach(function(h) {
       if (h.mimeType === INDICE_CONFIG.CARPETA_MIME) {
+        // La carpeta JSON-WSO2 de la raíz tiene copias: no se recorre.
+        if (carpetaId === raizId && h.name === JSON_WSO2.CARPETA) return;
         arbol.carpetas[h.id] = [h.name, carpetaId];
         cola.push(h.id);
       } else if (/\.json$/i.test(h.name || '')) {
@@ -1354,6 +1403,8 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
 
     var originales = { estados: {}, carpetas: {}, jsons: [], posJson: {}, pendientes: [], cola: [] };
     var cuentaO = { revisados: 0, conAcceso: 0, sinAcceso: 0, carpetas: 0, jsons: 0 };
+    // Las copias a JSON-WSO2 respetan el mismo margen que las filas.
+    var quedaCopia = function() { return quedaMs() - INDICE_BUSQUEDA.MARGEN_FILA_MS; };
     var bloque = [];
 
     var escribirBloque = function() {
@@ -1395,6 +1446,7 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
           }
           resultado = indiceResultadoFila_(item, arbol, directorio, originales);
         }
+        indiceCopiarResultadoAWso2_(resultado, item.caso, raizId, quedaCopia, cuenta);
       }
       bloque.push({
         fila: item.fila,
@@ -1450,6 +1502,175 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
   console.log('[Indice] Búsqueda (' + modo + '), parte ' + nota.partes + ': hasta la fila ' +
     nota.filaActual + ' de ' + nota.ultimaFila +
     (detenido ? ', detenida a pedido' : cortado ? ', sigue en otra parte' : ', terminada'));
+  return { terminado: !cortado && !nota.ultimoError, detenido: detenido, nota: nota, cuenta: cuenta };
+}
+
+// ── Pasar JSON a JSON-WSO2 ────────────────────────────────────────────
+//
+// Para las filas que tienen en la N links a archivos JSON (escritos antes
+// de JSON-WSO2, o los que no alcanzaron a copiarse): copia esos archivos a
+// JSON-WSO2/<caso>/ y cambia la celda por la carpeta del caso. No recorre
+// la raíz: va directo a los archivos enlazados. Corre por partes, como la
+// búsqueda, con la misma nota y el mismo activador.
+
+/**
+ * Cuántas filas tienen links a archivos en la columna N (solo calcula).
+ *   valoresN: [[texto]] de la columna N.
+ */
+function indiceContarPorPasar_(valoresN) {
+  var n = 0;
+  (valoresN || []).forEach(function(v) {
+    if (indiceAnalizarCeldaN_(v[0]).links.length > 0) n++;
+  });
+  return n;
+}
+
+/**
+ * Filas por pasar del Sheet configurado, o 0 si no se pudo leer. Lee solo
+ * la columna N.
+ */
+function indiceFilasPorPasar_() {
+  try {
+    var sheetId = obtenerSheetId();
+    if (!sheetId) return 0;
+    var hoja = SpreadsheetApp.openById(sheetId).getSheetByName(obtenerSheetTab());
+    if (!hoja || hoja.getLastRow() < 2) return 0;
+    return indiceContarPorPasar_(hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, hoja.getLastRow() - 1, 1).getValues());
+  } catch (err) {
+    console.warn('[Indice] No se pudieron contar las filas por pasar: ' + err.message);
+    return 0;
+  }
+}
+
+/**
+ * Una parte de "Pasar JSON a JSON-WSO2". Devuelve lo mismo que
+ * indiceCorrerBusqueda_: { ocupado, nota } o { terminado, detenido, nota, cuenta }.
+ */
+function indicePasarJson_(sheetId, presupuestoMs) {
+  var inicio = Date.now();
+  function quedaMs() { return presupuestoMs - (Date.now() - inicio); }
+  var ss = SpreadsheetApp.openById(sheetId);
+  var hoja = ss.getSheetByName(obtenerSheetTab());
+  if (!hoja) throw new Error('No existe la pestaña de solicitudes configurada.');
+  var raizId = obtenerCarpetaRaizId();
+  if (!raizId) throw new Error('No hay carpeta raíz configurada.');
+
+  var nota;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ocupado: true, nota: indiceLeerNota_(sheetId) };
+  try {
+    nota = indiceLeerNota_(sheetId);
+    if (nota && nota.ocupadoHasta > Date.now()) return { ocupado: true, nota: nota };
+    if (!nota || nota.modo !== 'pasar' || nota.etapa === 'terminado') {
+      nota = { modo: 'pasar', etapa: 'buscando', iniciadoEn: inicio, partes: 0, fila: 0, filaActual: 0, ultimaFila: 0, cuenta: {} };
+    }
+    nota.partes++;
+    nota.ocupadoHasta = inicio + presupuestoMs + 60000;
+    nota.parteIniciadaEn = inicio;
+    nota.ultimoError = '';
+    indiceGuardarNota_(sheetId, nota);
+  } finally {
+    lock.releaseLock();
+  }
+
+  var cuenta = nota.cuenta;
+  var cortado = false;
+  var detenido = false;
+  var bloque = [];
+  var ultimoAviso = Date.now();
+  var escribirBloque = function() {
+    if (bloque.length === 0) return true;
+    for (var intento = 0; intento < INDICE_BUSQUEDA.REINTENTOS_LOCK; intento++) {
+      if (indiceEscribirBloqueFilas_(ss, bloque, cuenta, true)) {
+        nota.filaActual = bloque[bloque.length - 1].fila;
+        nota.fila = nota.filaActual + 1;
+        nota.progreso = (nota.progreso || 0) + 1;
+        bloque = [];
+        return true;
+      }
+      Utilities.sleep(2000);
+    }
+    return false;
+  };
+
+  try {
+    var filas = indiceLeerFilasCompletas_(hoja);
+    nota.ultimaFila = filas.length ? filas[filas.length - 1].fila : 0;
+    indiceFormatoColumnas_(hoja);
+    for (var k = 0; k < filas.length; k++) {
+      var f = filas[k];
+      if (f.fila < (nota.fila || 0)) continue;
+      var celda = indiceAnalizarCeldaN_(f.textoN);
+      if (celda.links.length === 0) continue;
+      if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
+        cortado = true;
+        break;
+      }
+      if (Date.now() - ultimoAviso > INDICE_BUSQUEDA.AVISO_AVANCE_MS) {
+        ultimoAviso = Date.now();
+        var guardada = indiceLeerNota_(sheetId);
+        if (guardada && guardada.detener) {
+          detenido = true;
+          cortado = true;
+          break;
+        }
+        indiceConservarDelPanel_(nota, guardada);
+        nota.avance = { paso: 'pasar', en: Date.now() };
+        nota.filaActual = f.fila;
+        nota.cuenta = cuenta;
+        indiceGuardarNota_(sheetId, nota);
+      }
+
+      var leidos = jsonWso2LeerArchivos_(jsonWso2IdsDeUrls_(celda.links));
+      var copia = leidos.archivos.length > 0
+        ? jsonWso2CopiarAlCaso_(raizId, f.caso, leidos.archivos, function() {
+          return quedaMs() - INDICE_BUSQUEDA.MARGEN_FILA_MS;
+        })
+        : null;
+      if (!copia || copia.carpeta.total === 0) {
+        cuenta.noCopiados = (cuenta.noCopiados || 0) + 1;
+        continue;
+      }
+      // Quedan en la celda los links que no se copiaron (sin tiempo, sin
+      // acceso o que no son .json).
+      var sinCopiar = copia.pendientes.concat(leidos.noLeidos);
+      var urlsSinCopiar = celda.links.filter(function(u) {
+        var id = jsonWso2IdsDeUrls_([u])[0];
+        return !id || sinCopiar.indexOf(id) !== -1;
+      });
+      if (urlsSinCopiar.length > 0) cuenta.noCopiados = (cuenta.noCopiados || 0) + 1;
+      bloque.push({ fila: f.fila, caso: f.caso, servicio: f.servicio, celdaPasada: jsonWso2Celda_(copia.carpeta, urlsSinCopiar) });
+      if (bloque.length >= INDICE_CONFIG.BLOQUE_N && !escribirBloque()) {
+        cortado = true;
+        break;
+      }
+    }
+    if (!escribirBloque()) cortado = true;
+    if (!cortado) {
+      nota.etapa = 'terminado';
+      nota.terminadoEn = Date.now();
+      nota.fila = 0;
+    }
+  } catch (err) {
+    console.error('[Indice] Error al pasar JSON a JSON-WSO2: ' + err.message);
+    nota.ultimoError = String(err.message || err).substring(0, 300);
+    cortado = true;
+  } finally {
+    var guardadaAlFinal = indiceLeerNota_(sheetId);
+    indiceConservarDelPanel_(nota, guardadaAlFinal);
+    if (guardadaAlFinal && guardadaAlFinal.detener) {
+      nota.detener = true;
+      detenido = true;
+    }
+    nota.ocupadoHasta = 0;
+    nota.parteTerminadaEn = Date.now();
+    nota.avance = null;
+    nota.cuenta = cuenta;
+    indiceGuardarNota_(sheetId, nota);
+  }
+
+  console.log('[Indice] Pasar JSON a JSON-WSO2, parte ' + nota.partes + ': hasta la fila ' + nota.filaActual +
+    ' de ' + nota.ultimaFila + (detenido ? ', detenido a pedido' : cortado ? ', sigue en otra parte' : ', terminado'));
   return { terminado: !cortado && !nota.ultimoError, detenido: detenido, nota: nota, cuenta: cuenta };
 }
 
@@ -1672,7 +1893,9 @@ function continuarBusquedaJson(e) {
   var progresoAntes = nota.progreso || 0;
   var res;
   try {
-    res = indiceCorrerBusqueda_(sheetId, INDICE_BUSQUEDA.PRESUPUESTO_MS - esperado, nota.modo);
+    res = nota.modo === 'pasar'
+      ? indicePasarJson_(sheetId, INDICE_BUSQUEDA.PRESUPUESTO_MS - esperado)
+      : indiceCorrerBusqueda_(sheetId, INDICE_BUSQUEDA.PRESUPUESTO_MS - esperado, nota.modo);
   } catch (err) {
     console.error('[Indice] ' + err.message);
     res = { nota: indiceActualizarNota_(sheetId, { ultimoError: String(err.message || err).substring(0, 300) }) };
@@ -1697,7 +1920,12 @@ function continuarBusquedaJson(e) {
 // Hoy toda búsqueda completa es 'normal'. 'revisar' y 'rango' quedan por
 // las notas guardadas cuando existían "Revisar avisos" y la búsqueda por
 // filas en segundo plano.
-var INDICE_NOMBRE_MODO = { normal: 'Buscar JSON', revisar: 'Buscar JSON', rango: 'Buscar en filas' };
+var INDICE_NOMBRE_MODO = {
+  normal: 'Buscar JSON',
+  pasar: 'Pasar JSON a JSON-WSO2',
+  revisar: 'Buscar JSON',
+  rango: 'Buscar en filas'
+};
 
 // Texto alternativo de cada botón de la tarjeta, para lectores de pantalla.
 // En un botón con texto Google no lo muestra al pasar el cursor; por eso
@@ -1706,6 +1934,7 @@ var INDICE_NOMBRE_MODO = { normal: 'Buscar JSON', revisar: 'Buscar JSON', rango:
 var INDICE_AYUDA_BOTONES = {
   onBuscarJson: 'Revisa todo el Sheet. Puede tardar unos minutos.',
   onBuscarRangoJson: 'Para revisar una o pocas filas. Responde al momento.',
+  onPasarJsonWso2: 'Copia a JSON-WSO2 los JSON que ya están en la columna N y deja el link a la carpeta del caso.',
   onVerAvanceBusquedaJson: 'Actualiza la tarjeta y deja lista la parte siguiente',
   onContinuarBusquedaJson: 'Sigue la búsqueda desde donde quedó',
   onDetenerBusquedaJson: 'Para la búsqueda; lo ya escrito se queda'
@@ -1755,6 +1984,8 @@ function indiceTextoCuenta_(cuenta) {
   agregar(c.links, 'fila(s) con JSON');
   agregar((c.motivo || 0) + (c.mismoMotivo || 0), 'fila(s) con el motivo de por qué no hay JSON');
   agregar(c.limpiada, 'celda(s) limpiadas (tenían un motivo viejo y links)');
+  agregar(c.pasadas, 'fila(s) pasadas a JSON-WSO2');
+  agregar(c.noCopiados, 'fila(s) con JSON que no se pudieron copiar a JSON-WSO2 (quedan en el botón "Pasar")');
   agregar(c.carpetas, 'fila(s) con su carpeta en la columna O');
   agregar(c.cambiaron, 'fila(s) saltadas porque cambiaron mientras corría');
   agregar(c.sinFila, 'JSON sin fila (ver la pestaña "' + INDICE_PESTANA_SIN_FILA + '")');
@@ -1788,8 +2019,15 @@ function indiceSinEstado_(nota, ahora) {
 function textoCortoBusquedaJson_() {
   var sheetId = obtenerSheetId();
   var nota = sheetId ? indiceLeerNota_(sheetId) : null;
-  if (indiceSinEstado_(nota, Date.now())) return 'Busca los JSON de las filas y revisa las que no tienen.';
+  var corriendo = !!(nota && nota.ocupadoHasta > Date.now());
+  var porPasar = corriendo ? 0 : indiceFilasPorPasar_();
+  var avisoPasar = porPasar > 0 ? '⚠️ ' + porPasar + ' fila(s) por pasar a JSON-WSO2' : '';
+  if (indiceSinEstado_(nota, Date.now())) return avisoPasar || 'Busca los JSON de las filas y revisa las que no tienen.';
+  if (avisoPasar && nota.etapa !== 'buscando') return avisoPasar;
   var c = nota.cuenta || {};
+  if (nota.etapa === 'terminado' && nota.modo === 'pasar') {
+    return '✅ Pasados a JSON-WSO2: ' + formatearFechaIndice_(nota.terminadoEn) + ' · ' + (c.pasadas || 0) + ' fila(s)';
+  }
   if (nota.etapa === 'terminado') {
     return '✅ Última búsqueda: ' + formatearFechaIndice_(nota.terminadoEn) + ' · ' +
       (c.links || 0) + ' con JSON · ' + ((c.motivo || 0) + (c.mismoMotivo || 0)) + ' con motivo';
@@ -1838,6 +2076,24 @@ function buildBusquedaJsonCard_() {
       (nota.mapaCarpetas ? '<br>Mapa del Drive: ' + nota.mapaCarpetas + ' carpetas leídas' : '')
     : (nota ? INDICE_NOMBRE_MODO[nota.modo] : '');
 
+  // Sin búsqueda en curso, arriba de todo: filas con links a archivos que
+  // faltan por pasar a JSON-WSO2.
+  var libre = !nota || nota.etapa === 'terminado' || nota.etapa === 'detenido';
+  var porPasar = libre ? indiceFilasPorPasar_() : 0;
+  if (porPasar > 0) {
+    card.addSection(
+      CardService.newCardSection()
+        .addWidget(CardService.newTextParagraph().setText(
+          '⚠️ <b>' + porPasar + (porPasar === 1 ? ' fila tiene' : ' filas tienen') + ' JSON sin pasar a JSON-WSO2</b>'))
+        .addWidget(CardService.newButtonSet()
+          .addButton(CardService.newTextButton().setText('Pasar JSON a JSON-WSO2')
+            .setAltText(INDICE_AYUDA_BOTONES.onPasarJsonWso2)
+            .setTextButtonStyle(CardService.TextButtonStyle.FILLED).setBackgroundColor('#f9ab00')
+            .setOnClickAction(CardService.newAction().setFunctionName('onPasarJsonWso2')))
+          .addButton(indiceBotonAyuda_('onPasarJsonWso2')))
+    );
+  }
+
   var sinEstado = indiceSinEstado_(nota, ahora);
   if (sinEstado) {
     boton('Buscar JSON', 'onBuscarJson', true);
@@ -1851,6 +2107,8 @@ function buildBusquedaJsonCard_() {
         '</b> carpetas revisadas (actualizado a las ' + formatearHoraIndice_(nota.avance.en) + ').';
     } else if (nota.avance && nota.avance.paso === 'filas') {
       paso = 'Paso 2 de 2: revisando filas (carpeta raíz leída: ' + nota.avance.carpetas + ' carpetas).';
+    } else if (nota.avance && nota.avance.paso === 'pasar') {
+      paso = 'Copiando los JSON a JSON-WSO2.';
     } else {
       paso = 'Empezando: abriendo el Sheet y Drive.';
     }
@@ -1913,7 +2171,7 @@ function buildBusquedaJsonCard_() {
   card.addSection(estado);
 
   // Búsqueda por filas: solo cuando no hay otra búsqueda en curso.
-  if (!nota || nota.etapa === 'terminado' || nota.etapa === 'detenido') {
+  if (libre) {
     var ultimaFilas = null;
     try {
       ultimaFilas = JSON.parse(
@@ -2137,6 +2395,9 @@ function indiceBuscarEnFilas_(sheetId, rango) {
     var f = filas[i];
     var celda = indiceAnalizarCeldaN_(f.textoN);
     var encontrado = { resultado: null, carpeta: null };
+    // Con la carpeta de JSON-WSO2 o solo con links, no se toca (los links
+    // los pasa "Pasar JSON a JSON-WSO2"); con links y motivo, se limpia.
+    if (celda.carpetas.length > 0) continue;
     if (celda.links.length > 0 && celda.motivos.length === 0) continue;
     if (celda.links.length === 0) {
       if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
@@ -2148,6 +2409,9 @@ function indiceBuscarEnFilas_(sheetId, rango) {
         faltaDesde = f.fila;
         break;
       }
+      indiceCopiarResultadoAWso2_(encontrado.resultado, f.caso, raizId, function() {
+        return quedaMs() - INDICE_BUSQUEDA.MARGEN_FILA_MS;
+      }, cuenta);
     }
     bloque.push({
       fila: f.fila,
@@ -2194,8 +2458,9 @@ function indiceTextoResultadoFilas_(rango, res) {
 }
 
 /**
- * "Buscar JSON": prepara la nota y programa la primera parte. No busca
- * nada aquí (una acción de tarjeta tiene 30 s).
+ * "Buscar JSON" (modo 'normal') y "Pasar JSON a JSON-WSO2" (modo 'pasar'):
+ * preparan la nota y programan la primera parte. No buscan ni copian nada
+ * aquí (una acción de tarjeta tiene 30 s).
  */
 function indiceIniciarDesdePanel_(modo, host) {
   var motivo = motivoConfigInvalida();
@@ -2215,7 +2480,12 @@ function indiceIniciarDesdePanel_(modo, host) {
   // sin recorrer Drive.
   var hoja = SpreadsheetApp.openById(sheetId).getSheetByName(obtenerSheetTab());
   if (!hoja) return 'No existe la pestaña de solicitudes configurada.';
-  if (indiceElegirFilas_(indiceLeerFilasCompletas_(hoja), 0, null).length === 0) {
+  if (modo === 'pasar') {
+    if (hoja.getLastRow() < 2 ||
+        indiceContarPorPasar_(hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, hoja.getLastRow() - 1, 1).getValues()) === 0) {
+      return 'No hay filas por pasar: todas apuntan a su carpeta de JSON-WSO2.';
+    }
+  } else if (indiceElegirFilas_(indiceLeerFilasCompletas_(hoja), 0, null).length === 0) {
     return 'Todas las filas ya tienen sus JSON: no hay nada que buscar.';
   }
 
@@ -2432,6 +2702,17 @@ function onBuscarRangoJson(e) {
   } catch (err) {
     console.error('[Indice] ' + err.message);
     aviso = 'No se pudo buscar en esas filas: ' + err.message;
+  }
+  return indiceRespuestaBusqueda_(aviso);
+}
+
+function onPasarJsonWso2(e) {
+  var aviso;
+  try {
+    aviso = indiceIniciarDesdePanel_('pasar', indiceHost_(e));
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo iniciar: ' + err.message;
   }
   return indiceRespuestaBusqueda_(aviso);
 }

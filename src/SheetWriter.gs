@@ -14,6 +14,8 @@
  * con el estado.
  */
 function onEnviar(e) {
+  // Para saber cuánto le queda a la acción al copiar los JSON a JSON-WSO2.
+  jsonWso2MarcarInicioAccion_();
   var authResp = chequearAutorizacionAction_();
   if (authResp) return authResp;
 
@@ -1040,10 +1042,14 @@ function construirCeldaConEnlaces(valorCampo) {
 }
 
 /**
- * Agrega los links de las copias .json a la columna Archivos JSON (N) de
- * las filas dadas, sin repetir los que ya estaban (los reintentos pueden
- * volver a reportar los mismos). En Sheets creados antes de esta columna,
- * si la fila 1 tiene cabeceras y la N está vacía, escribe el título.
+ * Escribe en la columna Archivos JSON (N) de las filas dadas los .json que
+ * copió el envío o un reintento. Si hay tiempo, los copia también a
+ * JSON-WSO2/<caso>/ y la celda queda con el link a esa carpeta; los que no
+ * alcanzan a copiarse quedan como links a archivos (los pasa después el
+ * botón "Pasar JSON a JSON-WSO2"). No repite links que ya estaban (los
+ * reintentos pueden volver a reportar los mismos). En Sheets creados antes
+ * de esta columna, si la fila 1 tiene cabeceras y la N está vacía, escribe
+ * el título.
  */
 function agregarJsonAFilas_(sheet, filas, jsonUrls) {
   if (!jsonUrls || jsonUrls.length === 0 || !filas || filas.length === 0) return;
@@ -1054,15 +1060,62 @@ function agregarJsonAFilas_(sheet, filas, jsonUrls) {
     celdaHeader.setValue(SHEET_HEADERS[SHEET_COLS.ARCHIVOS_JSON - 1]).setFontWeight('bold');
   }
 
+  // Copia a JSON-WSO2, una vez por caso (las filas de un envío suelen ser
+  // del mismo caso).
+  var copiaPorCaso = {};
+  var quedaMs = jsonWso2TiempoParaCopiar_();
+  if (quedaMs) {
+    try {
+      var raizId = obtenerCarpetaRaizId();
+      var leidos = jsonWso2LeerArchivos_(jsonWso2IdsDeUrls_(jsonUrls));
+      filas.forEach(function(row) {
+        var caso = String(sheet.getRange(row, SHEET_COLS.NUMERO_CASO).getValue() || '').trim();
+        if (!caso || copiaPorCaso[caso] !== undefined) return;
+        copiaPorCaso[caso] = leidos.archivos.length > 0 && quedaMs() > 0
+          ? jsonWso2CopiarAlCaso_(raizId, caso, leidos.archivos, quedaMs)
+          : null;
+        if (copiaPorCaso[caso]) {
+          copiaPorCaso[caso].pendientes = copiaPorCaso[caso].pendientes.concat(leidos.noLeidos);
+        }
+      });
+    } catch (errCopia) {
+      console.warn('[JSON-WSO2] No se copiaron los JSON del envío: ' + errCopia.message);
+    }
+  }
+
   filas.forEach(function(row) {
     var celda = sheet.getRange(row, SHEET_COLS.ARCHIVOS_JSON);
-    var urls = String(celda.getValue() || '').split('\n')
+    var lineas = String(celda.getValue() || '').split('\n')
       .map(function(u) { return u.trim(); })
       .filter(function(u) { return u !== ''; });
+    var urls = lineas.filter(function(l) { return !jsonWso2EsLineaCarpeta_(l); });
     jsonUrls.forEach(function(u) {
       if (urls.indexOf(u) === -1) urls.push(u);
     });
-    celda.setRichTextValue(construirCeldaConEnlaces(urls.join('\n')));
+
+    var caso = String(sheet.getRange(row, SHEET_COLS.NUMERO_CASO).getValue() || '').trim();
+    var copia = copiaPorCaso[caso];
+    if (copia && copia.carpeta.total > 0) {
+      // Quedan como links los que no se copiaron.
+      var sinCopiar = urls.filter(function(u) {
+        var id = jsonWso2IdsDeUrls_([u])[0];
+        return !id || copia.pendientes.indexOf(id) !== -1 || jsonUrls.indexOf(u) === -1;
+      });
+      celda.setRichTextValue(jsonWso2Celda_(copia.carpeta, sinCopiar));
+    } else if (lineas.some(jsonWso2EsLineaCarpeta_)) {
+      // Ya tenía la carpeta de JSON-WSO2 (un reintento anterior): se
+      // conserva y se agregan debajo los links nuevos.
+      var linea = lineas.filter(jsonWso2EsLineaCarpeta_)[0];
+      var m = /^JSON-WSO2\/(\d+) \((\d+) JSON\)$/.exec(linea);
+      var rich = celda.getRichTextValue();
+      var tramos = rich ? rich.getRuns() : [];
+      var url = tramos.length > 0 ? tramos[0].getLinkUrl() : null;
+      celda.setRichTextValue(url && m
+        ? jsonWso2Celda_({ url: url, caso: m[1], total: Number(m[2]) }, urls)
+        : construirCeldaConEnlaces(lineas.join('\n')));
+    } else {
+      celda.setRichTextValue(construirCeldaConEnlaces(urls.join('\n')));
+    }
   });
 }
 

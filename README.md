@@ -35,6 +35,7 @@ Todo el código del add-on vive en `src/`. Los archivos `.gs` de Apps Script com
 | `src/EstadoCard.gs` | Tarjeta de estado de envíos y lista de envíos abiertos. |
 | `src/EditarSolicitud.gs` | Editor de solicitudes ya guardadas (in-place, sin duplicar filas). |
 | `src/IndiceJson.gs` | Búsqueda de JSON de las solicitudes desde el panel del Sheet: columnas N y O, pestaña "JSON sin fila", trabajo por partes con activadores. |
+| `src/JsonWso2.gs` | Copia de los JSON a `[Raíz]/JSON-WSO2/<caso>/` y celda de la columna N con el link a esa carpeta. La usan la búsqueda de JSON, el envío y los reintentos. |
 | `src/Tests.gs` | Tests unitarios de helpers puros (regex, columnas, parsing). Corren en Apps Script (`correrTodosLosTests`) y en Node (`npm test`). |
 | `src/Integracion.gs` | Prueba de integración real del envío (`correrIntegracion`) contra un Sheet y una carpeta de prueba. Se corre a mano en Apps Script. |
 | `src/appsscript.template.json` | Plantilla del manifiesto del add-on: scopes OAuth, triggers, dominios permitidos, y una URL de logo por defecto (gstatic Gmail). Está en git y es la fuente de verdad. |
@@ -139,8 +140,9 @@ En el panel del add-on en el Sheet, la sección **"🗂️ JSON de las solicitud
 
 | Dónde | Qué |
 |---|---|
-| Columna N | Los links a los `.json` de la fila, uno por línea. Si no hay, el motivo. |
+| Columna N | El link a la carpeta de los JSON del caso en `JSON-WSO2`, con el texto `JSON-WSO2/9300 (2 JSON)`. Si no hay JSON, el motivo. Debajo pueden quedar links a archivos que no se pudieron copiar (ver [Carpeta JSON-WSO2](#carpeta-json-wso2)). |
 | Columna O ("Carpeta copiada") | El link a la carpeta copiada de la fila, cuando la columna C no enlaza ya una carpeta de la raíz. |
+| Carpeta `[Raíz]/JSON-WSO2/<caso>/` | Una copia de cada JSON del caso, un archivo por nombre. |
 | Pestaña "JSON sin fila" | Los `.json` de la raíz que ninguna fila usa, con su ruta y el porqué. Se reescribe al terminar cada búsqueda completa. |
 
 Motivos posibles en la columna N:
@@ -159,7 +161,7 @@ Cualquier línea de la columna N que no sea una URL se toma como motivo. Las cel
 - **La clave es el número de caso.** Para cada fila se juntan los `.json` de todas las carpetas de la raíz cuyo nombre contiene el número de caso completo, en cualquier rama. El sufijo de reenvío no cuenta (`9300_2` es el caso 9300) y solo se toman números de 3 dígitos o más, para no confundir versiones o nombres de productos (`v1.0.1`, `WSO2`) con casos.
 - **Archivos repetidos:** mismo nombre y mismo contenido (md5) dejan un solo link; mismo nombre con contenido distinto deja los dos.
 - **Si el caso no tiene carpeta en la raíz**, se abren los links de las columnas C y D de esa fila (la copia con otro nombre o la carpeta original) y se busca ahí.
-- **Qué lee de Drive:** solo la carpeta raíz configurada, una carpeta por consulta, y las carpetas enlazadas en las columnas C y D. No recorre el resto del Drive de quien busca.
+- **Qué lee de Drive:** solo la carpeta raíz configurada, una carpeta por consulta, y las carpetas enlazadas en las columnas C y D. No recorre el resto del Drive de quien busca ni la carpeta `JSON-WSO2`, que solo tiene copias.
 
 ### Botones
 
@@ -170,6 +172,11 @@ Cualquier línea de la columna N que no sea una URL se toma como motivo. Las cel
 | Ver avance | Refresca la tarjeta y deja lista la parte siguiente (ver abajo). |
 | Continuar | Sigue una búsqueda que quedó a medias. |
 | Detener | Para la búsqueda; lo ya escrito se conserva. |
+| Pasar JSON a JSON-WSO2 | Aparece arriba solo si hay filas con links a archivos JSON en la columna N. Copia esos JSON a `JSON-WSO2/<caso>/` y cambia la celda por el link a la carpeta. Corre en segundo plano, por partes. |
+
+La tarjeta tiene poco texto a propósito. Junto a "Buscar JSON", "Buscar en filas" y "Pasar JSON a JSON-WSO2" hay un ícono ⓘ: al pasar el cursor muestra para qué sirve el botón, y con un clic muestra lo mismo como aviso. Las casillas tienen una pista debajo ("Por ejemplo, 120" y "Vacío = una sola fila").
+
+Las tarjetas de los add-ons solo muestran un tooltip en los botones de **solo ícono**: en un botón con texto, Google ignora el texto alternativo al pasar el cursor. Por eso la ayuda va en un ícono aparte y no en el botón. Los textos están en `INDICE_AYUDA_BOTONES`, en `src/IndiceJson.gs`.
 
 ### Búsqueda por filas
 
@@ -187,6 +194,27 @@ Reglas:
 - No reescribe la pestaña "JSON sin fila" ni usa la nota de la búsqueda completa.
 
 Diferencia con la búsqueda completa: esta no ve un `.json` que esté en una carpeta del caso fuera de su ruta normal y sin link en la fila. Para eso está "Buscar JSON".
+
+### Carpeta JSON-WSO2
+
+Los JSON encontrados se copian a `[Raíz]/JSON-WSO2/<caso>/`, y la columna N enlaza esa carpeta en vez de cada archivo:
+
+```
+[Raíz]/
+└── JSON-WSO2/
+    ├── 9300/
+    │   ├── config.json
+    │   └── tarifas.json
+    └── 7799/
+        └── api.json
+```
+
+- **Un archivo por nombre en cada caso.** Si varias filas del caso usan el mismo JSON, hay una sola copia. Los reenvíos (`9300_2`) van a la misma carpeta `9300`.
+- **Mismo nombre con otro contenido:** se queda el más reciente. Se reemplaza el contenido sobre el mismo archivo, así su link no cambia.
+- **Quién copia:** "Buscar JSON", "Buscar en filas", "Pasar JSON a JSON-WSO2", el envío y los reintentos de copia.
+- **El envío** copia los JSON en el mismo clic solo si le quedan al menos 8 segundos de los 30 que dura la acción. Si no, la columna N queda con los links a los archivos y la fila aparece en "Pasar JSON a JSON-WSO2". Los reintentos copian como mucho 8 segundos por ronda, para no alargar el activador.
+- **Si un JSON no se puede copiar** (sin tiempo o sin permiso), su link queda debajo de la línea de la carpeta y la fila sigue apareciendo en "Pasar JSON a JSON-WSO2".
+- Las copias quedan a nombre de quien las crea. El ID de la carpeta `JSON-WSO2` se guarda en las propiedades del script (`JSON_WSO2_ID_<raíz>`). Código en `src/JsonWso2.gs`.
 
 ### Trabajo por partes
 
@@ -584,7 +612,7 @@ Hay tres niveles:
    npm test
    ```
 
-   Incluyen los tests de `src/Tests.gs`, los de la búsqueda de JSON (`tests/indice-json.test.js`) y los correos de ejemplo de `tests/fixtures/`. Para agregar un correo: guardar el cuerpo en `tests/fixtures/<nombre>.txt` y en `tests/fixtures/<nombre>.json` el asunto y los valores esperados (ver los existentes). Los correos van anonimizados.
+   Incluyen los tests de `src/Tests.gs`, los de la búsqueda de JSON (`tests/indice-json.test.js` y `tests/json-wso2.test.js`) y los correos de ejemplo de `tests/fixtures/`. Para agregar un correo: guardar el cuerpo en `tests/fixtures/<nombre>.txt` y en `tests/fixtures/<nombre>.json` el asunto y los valores esperados (ver los existentes). Los correos van anonimizados.
 
 2. **Integración real** (a mano, en Apps Script): `correrIntegracion()` en `src/Integracion.gs` hace un envío mixto ESB + API contra recursos de prueba, revisa filas, carpetas, copias y la columna de JSON, y al final borra lo que creó. Requiere en Propiedades del script: `TEST_SHEET_ID`, `TEST_SHEET_TAB`, `TEST_CARPETA_ID` (destino de las copias) y `TEST_ORIGEN_URL` (una carpeta pequeña con al menos un `.json`, fuera de `TEST_CARPETA_ID`). Correrla después de cada cambio en el envío o la copia.
 

@@ -155,13 +155,30 @@ function correrIntegracion() {
           var jsonEnCarpeta = listarJsonRecursivo_(g.carpeta);
           revisar(jsonEnCarpeta.length > 0,
                   g.nombre + ': la carpeta copiada tiene .json (' + jsonEnCarpeta.length + ')');
-          var linksN = linksDeCelda_(sheet.getRange(g.fila.row, SHEET_COLS.ARCHIVOS_JSON));
-          revisar(linksN.length === jsonEnCarpeta.length,
-                  g.nombre + ': columna N tiene un link por .json (' + linksN.length + ' de ' + jsonEnCarpeta.length + ')');
-          var idsCarpeta = jsonEnCarpeta.map(function(a) { return a.getId(); });
-          revisar(linksN.every(function(u) {
-            return idsCarpeta.some(function(id) { return u.indexOf(id) !== -1; });
-          }), g.nombre + ': los links de la columna N apuntan a las copias de su carpeta');
+          var celdaN = sheet.getRange(g.fila.row, SHEET_COLS.ARCHIVOS_JSON);
+          var linksN = linksDeCelda_(celdaN);
+          var primeraLinea = String(celdaN.getValue() || '').split('\n')[0];
+          if (jsonWso2EsLineaCarpeta_(primeraLinea)) {
+            // Con tiempo, el envío copia los JSON a JSON-WSO2/<caso>/ y la N
+            // enlaza esa carpeta: un archivo por nombre.
+            var carpetaWso2 = buscarCarpetaCaso_(raiz, [JSON_WSO2.CARPETA], numeroCaso);
+            var nombres = {};
+            jsonEnCarpeta.forEach(function(a) { nombres[a.getName()] = true; });
+            revisar(carpetaWso2 !== null, g.nombre + ': existe <raíz>/JSON-WSO2/' + numeroCaso);
+            revisar(primeraLinea === jsonWso2TextoCarpeta_(numeroCaso, Object.keys(nombres).length),
+                    g.nombre + ': columna N dice "' + primeraLinea + '"');
+            if (carpetaWso2) {
+              revisar(linksN[0] && linksN[0].indexOf(carpetaWso2.getId()) !== -1,
+                      g.nombre + ': la columna N enlaza la carpeta de JSON-WSO2');
+            }
+          } else {
+            revisar(linksN.length === jsonEnCarpeta.length,
+                    g.nombre + ': columna N tiene un link por .json (' + linksN.length + ' de ' + jsonEnCarpeta.length + ')');
+            var idsCarpeta = jsonEnCarpeta.map(function(a) { return a.getId(); });
+            revisar(linksN.every(function(u) {
+              return idsCarpeta.some(function(id) { return u.indexOf(id) !== -1; });
+            }), g.nombre + ': los links de la columna N apuntan a las copias de su carpeta');
+          }
         });
     }
 
@@ -183,7 +200,7 @@ function correrIntegracion() {
 
   } finally {
     restaurar();
-    limpiarIntegracion_(sheet, startRow, envioId, raiz, servicio, apimExistia);
+    limpiarIntegracion_(sheet, startRow, envioId, raiz, servicio, apimExistia, numeroCaso);
   }
 
   console.log('════════════════════════════════════');
@@ -332,7 +349,7 @@ function linkDeCelda_(rango) {
  * hacia arriba) y manda a la papelera las carpetas del servicio de prueba.
  * La carpeta APIM solo se manda a la papelera si la creó la prueba.
  */
-function limpiarIntegracion_(sheet, startRow, envioId, raiz, servicio, apimExistia) {
+function limpiarIntegracion_(sheet, startRow, envioId, raiz, servicio, apimExistia, numeroCaso) {
   try {
     if (envioId && startRow > 0) {
       var ultima = sheet.getLastRow();
@@ -354,6 +371,11 @@ function limpiarIntegracion_(sheet, startRow, envioId, raiz, servicio, apimExist
       var srv = apim.getFoldersByName(servicio);
       while (srv.hasNext()) srv.next().setTrashed(true);
       if (!apimExistia) apim.setTrashed(true);
+    }
+    var wso2 = raiz.getFoldersByName(JSON_WSO2.CARPETA);
+    while (wso2.hasNext()) {
+      var delCaso = wso2.next().getFoldersByName(numeroCaso);
+      while (delCaso.hasNext()) delCaso.next().setTrashed(true);
     }
   } catch (errCarpetas) {
     console.error('[Integración] No se pudieron mandar a la papelera las carpetas de prueba: ' + errCarpetas.message);
