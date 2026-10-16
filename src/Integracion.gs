@@ -160,12 +160,13 @@ function correrIntegracion() {
           var primeraLinea = String(celdaN.getValue() || '').split('\n')[0];
           if (jsonWso2EsLineaCarpeta_(primeraLinea)) {
             // Con tiempo, el envío copia los JSON a JSON-WSO2/<caso>/ y la N
-            // enlaza esa carpeta: un archivo por nombre.
+            // enlaza esa carpeta, con los JSON en sus mismas subcarpetas.
             var carpetaWso2 = buscarCarpetaCaso_(raiz, [JSON_WSO2.CARPETA], numeroCaso);
-            var nombres = {};
-            jsonEnCarpeta.forEach(function(a) { nombres[a.getName()] = true; });
             revisar(carpetaWso2 !== null, g.nombre + ': existe <raíz>/JSON-WSO2/' + numeroCaso);
-            revisar(primeraLinea === jsonWso2TextoCarpeta_(numeroCaso, Object.keys(nombres).length),
+            var enWso2 = carpetaWso2 ? listarJsonRecursivo_(carpetaWso2).length : 0;
+            revisar(enWso2 === jsonEnCarpeta.length,
+                    g.nombre + ': JSON-WSO2 tiene los mismos .json que la carpeta copiada (' + enWso2 + ' de ' + jsonEnCarpeta.length + ')');
+            revisar(primeraLinea === jsonWso2TextoCarpeta_(numeroCaso, enWso2),
                     g.nombre + ': columna N dice "' + primeraLinea + '"');
             if (carpetaWso2) {
               revisar(linksN[0] && linksN[0].indexOf(carpetaWso2.getId()) !== -1,

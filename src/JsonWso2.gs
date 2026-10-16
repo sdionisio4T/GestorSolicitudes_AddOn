@@ -1,11 +1,12 @@
 /**
  * JsonWso2.gs: copia de los JSON a la carpeta JSON-WSO2 de la raíz.
  *
- * Los .json de cada caso se copian a [Raíz]/JSON-WSO2/<caso>/, un archivo
- * por nombre (si llega uno con el mismo nombre y otro contenido, queda el
- * más reciente). La columna N enlaza esa carpeta con el texto
- * "JSON-WSO2/<caso> (<n> JSON)". Lo usan la búsqueda de JSON, el botón
- * "Pasar JSON a JSON-WSO2", el envío y los reintentos.
+ * Los .json de cada caso se copian a [Raíz]/JSON-WSO2/<caso>/, cada uno en
+ * el mismo camino de subcarpetas que tiene dentro del caso (v1.0/EI/docs);
+ * si en ese camino llega uno con otro contenido, queda el más reciente. La
+ * columna N enlaza la carpeta del caso con el texto "JSON-WSO2/<caso> (<n>
+ * JSON)". Copian el botón "Pasar JSON a JSON-WSO2", el envío (si le queda
+ * tiempo) y los reintentos; las búsquedas solo escriben los links.
  */
 
 var JSON_WSO2 = {
@@ -95,22 +96,33 @@ function jsonWso2IdsDeUrls_(urls) {
 // ── Copia ─────────────────────────────────────────────────────────────
 
 /**
- * Uno por nombre, el más reciente (solo calcula).
- *   archivos: [{ id, nombre, modificado, md5 }]
+ * Clave de un JSON dentro de la carpeta del caso: su camino de subcarpetas
+ * y su nombre ("v1.0/EI/docs/config.json").
  */
-function jsonWso2UnoPorNombre_(archivos) {
-  var porNombre = {};
+function jsonWso2Clave_(a) {
+  return (a.ruta || []).concat([a.nombre]).join('/');
+}
+
+/**
+ * Uno por camino, el más reciente (solo calcula). Dos JSON con el mismo
+ * nombre en subcarpetas distintas (v1.0 y v1.0.1) son dos archivos; el
+ * mismo camino en un reenvío (9300 y 9300_2) es el mismo archivo.
+ *   archivos: [{ id, nombre, ruta, modificado, md5 }]
+ */
+function jsonWso2UnoPorCamino_(archivos) {
+  var porClave = {};
   var orden = [];
   (archivos || []).forEach(function(a) {
-    var actual = porNombre[a.nombre];
+    var k = jsonWso2Clave_(a);
+    var actual = porClave[k];
     if (!actual) {
-      porNombre[a.nombre] = a;
-      orden.push(a.nombre);
+      porClave[k] = a;
+      orden.push(k);
     } else if (String(a.modificado || '') > String(actual.modificado || '')) {
-      porNombre[a.nombre] = a;
+      porClave[k] = a;
     }
   });
-  return orden.map(function(n) { return porNombre[n]; });
+  return orden.map(function(k) { return porClave[k]; });
 }
 
 /**
@@ -136,19 +148,41 @@ function jsonWso2CarpetaPrincipal_(raizId, crear) {
   return carpeta;
 }
 
-function jsonWso2CarpetaDelCaso_(principal, caso) {
-  var existentes = principal.getFoldersByName(caso);
-  return existentes.hasNext() ? existentes.next() : principal.createFolder(caso);
+function jsonWso2Subcarpeta_(padre, nombre) {
+  var existentes = padre.getFoldersByName(nombre);
+  return existentes.hasNext() ? existentes.next() : padre.createFolder(nombre);
 }
 
 /**
- * Copia los JSON a [Raíz]/JSON-WSO2/<caso>/. Si ya hay uno con el mismo
- * nombre: mismo contenido (md5), no se toca; otro contenido, se reemplaza
- * si el que llega es más reciente que el que se copió (fecha guardada en
- * la descripción de la copia). El contenido se reemplaza sobre el mismo
- * archivo, así su link no cambia.
+ * Todos los .json bajo una carpeta, con su camino desde ella. Una consulta
+ * por carpeta. Devuelve { clave: { id, md5 } }.
+ */
+function jsonWso2JsonBajo_(carpetaId) {
+  var res = {};
+  var cola = [{ id: carpetaId, ruta: [] }];
+  var vueltas = 0;
+  while (cola.length > 0 && vueltas < 200) {
+    vueltas++;
+    var actual = cola.shift();
+    indiceListarHijos_(actual.id, null, true).forEach(function(h) {
+      if (h.mimeType === INDICE_CONFIG.CARPETA_MIME) {
+        cola.push({ id: h.id, ruta: actual.ruta.concat([h.name]) });
+      } else if (/\.json$/i.test(h.name || '')) {
+        res[actual.ruta.concat([h.name]).join('/')] = { id: h.id, md5: h.md5Checksum || '' };
+      }
+    });
+  }
+  return res;
+}
+
+/**
+ * Copia los JSON a [Raíz]/JSON-WSO2/<caso>/, cada uno en su camino de
+ * subcarpetas. Si ya hay uno en el mismo camino: mismo contenido (md5), no
+ * se toca; otro contenido, se reemplaza si el que llega es más reciente que
+ * el que se copió (fecha guardada en la descripción de la copia). El
+ * contenido se reemplaza sobre el mismo archivo, así su link no cambia.
  *
- *   archivos: [{ id, nombre, modificado, md5 }]
+ *   archivos: [{ id, nombre, ruta, modificado, md5 }]
  *   quedaMs(): tiempo que queda para copiar; se deja de copiar en 0.
  * Devuelve { carpeta: { id, url, caso, total }, pendientes: [id] } o null
  * si el caso no es un número o no se pudo abrir la carpeta. pendientes son
@@ -157,27 +191,30 @@ function jsonWso2CarpetaDelCaso_(principal, caso) {
 function jsonWso2CopiarAlCaso_(raizId, caso, archivos, quedaMs) {
   var numero = indiceNormalizarCaso_(caso);
   if (!numero || !raizId) return null;
-  var elegidos = jsonWso2UnoPorNombre_(archivos);
   var pendientes = [];
   var carpeta;
   try {
-    carpeta = jsonWso2CarpetaDelCaso_(jsonWso2CarpetaPrincipal_(raizId, true), numero);
+    carpeta = jsonWso2Subcarpeta_(jsonWso2CarpetaPrincipal_(raizId, true), numero);
   } catch (err) {
     console.warn('[JSON-WSO2] No se pudo abrir la carpeta del caso: ' + err.message);
     return null;
   }
 
-  var existentes = {};
-  indiceListarHijos_(carpeta.getId(), null, true).forEach(function(h) {
-    if (/\.json$/i.test(h.name || '')) existentes[h.name] = { id: h.id, md5: h.md5Checksum || '' };
-  });
+  var existentes = jsonWso2JsonBajo_(carpeta.getId());
+  var subcarpetas = { '': carpeta };
+  var carpetaDe = function(ruta) {
+    var k = ruta.join('/');
+    if (!subcarpetas[k]) subcarpetas[k] = jsonWso2Subcarpeta_(carpetaDe(ruta.slice(0, -1)), ruta[ruta.length - 1]);
+    return subcarpetas[k];
+  };
 
-  elegidos.forEach(function(a) {
+  jsonWso2UnoPorCamino_(archivos).forEach(function(a) {
     if (quedaMs() <= 0) {
       pendientes.push(a.id);
       return;
     }
-    var ya = existentes[a.nombre];
+    var clave = jsonWso2Clave_(a);
+    var ya = existentes[clave];
     try {
       if (ya && ya.md5 && ya.md5 === a.md5) return;
       var descripcion = 'Copia de ' + a.id + '; modificado:' + (a.modificado || '');
@@ -190,9 +227,9 @@ function jsonWso2CopiarAlCaso_(raizId, caso, archivos, quedaMs) {
         archivo.setDescription(descripcion);
         ya.md5 = a.md5;
       } else {
-        var copia = DriveApp.getFileById(a.id).makeCopy(a.nombre, carpeta);
+        var copia = DriveApp.getFileById(a.id).makeCopy(a.nombre, carpetaDe(a.ruta || []));
         copia.setDescription(descripcion);
-        existentes[a.nombre] = { id: copia.getId(), md5: a.md5 };
+        existentes[clave] = { id: copia.getId(), md5: a.md5 };
       }
     } catch (err) {
       console.warn('[JSON-WSO2] No se pudo copiar un JSON: ' + err.message);
@@ -207,24 +244,83 @@ function jsonWso2CopiarAlCaso_(raizId, caso, archivos, quedaMs) {
 }
 
 /**
- * Datos de los JSON enlazados por ID (para los que solo se tiene el link).
- * Los que no se pueden abrir o no son .json quedan en noLeidos.
- * Devuelve { archivos: [{ id, nombre, modificado, md5 }], noLeidos: [id] }.
+ * Camino de subcarpetas de un archivo dentro de su caso: sube por sus
+ * carpetas hasta la del caso (nombre con el número de caso, como 9300 o
+ * 9300_2) o hasta una carpeta enlazada en la fila (topes), sin incluirlas.
+ * Si no llega a ninguna, devuelve [] (el archivo va suelto en la carpeta
+ * del caso). memo guarda las carpetas ya consultadas.
  */
-function jsonWso2LeerArchivos_(ids) {
+function jsonWso2CaminoEnElCaso_(padreId, caso, topes, memo) {
+  var nombres = [];
+  var actual = padreId;
+  for (var vueltas = 0; actual && vueltas < 20; vueltas++) {
+    if ((topes || []).indexOf(actual) !== -1) return nombres;
+    var datos = memo[actual];
+    if (datos === undefined) {
+      try {
+        var f = Drive.Files.get(actual, { fields: 'id,name,parents', supportsAllDrives: true });
+        datos = { nombre: f.name || '', padre: (f.parents || [])[0] || '' };
+      } catch (err) {
+        datos = null;
+      }
+      memo[actual] = datos;
+    }
+    if (!datos) return [];
+    if (indiceNumerosEnNombre_(datos.nombre).indexOf(caso) !== -1) return nombres;
+    nombres.unshift(datos.nombre);
+    actual = datos.padre;
+  }
+  return [];
+}
+
+/**
+ * Datos de los JSON enlazados por ID (para los que solo se tiene el link),
+ * con su camino dentro del caso. Los que no se pueden abrir o no son .json
+ * quedan en noLeidos. topes: carpetas enlazadas en la fila (columnas C y D).
+ * Devuelve { archivos: [{ id, nombre, ruta, modificado, md5 }], noLeidos: [id] }.
+ */
+function jsonWso2LeerArchivos_(ids, caso, topes) {
+  var numero = indiceNormalizarCaso_(caso);
+  var memo = {};
   var archivos = [];
   var noLeidos = [];
   (ids || []).forEach(function(id) {
     try {
-      var f = Drive.Files.get(id, { fields: 'id,name,modifiedTime,md5Checksum', supportsAllDrives: true });
+      var f = Drive.Files.get(id, { fields: 'id,name,parents,modifiedTime,md5Checksum', supportsAllDrives: true });
       if (!/\.json$/i.test(f.name || '')) {
         noLeidos.push(id);
         return;
       }
-      archivos.push({ id: f.id, nombre: f.name, modificado: f.modifiedTime || '', md5: f.md5Checksum || '' });
+      archivos.push({
+        id: f.id,
+        nombre: f.name,
+        ruta: numero ? jsonWso2CaminoEnElCaso_((f.parents || [])[0], numero, topes, memo) : [],
+        modificado: f.modifiedTime || '',
+        md5: f.md5Checksum || ''
+      });
     } catch (err) {
       noLeidos.push(id);
     }
   });
   return { archivos: archivos, noLeidos: noLeidos };
+}
+
+/**
+ * Carpetas de casos que ya existen en JSON-WSO2 (sin crear nada): una
+ * consulta. Devuelve { caso: { id, url } } o {} si JSON-WSO2 no existe.
+ */
+function jsonWso2CarpetasDeCasos_(raizId) {
+  var res = {};
+  try {
+    var principal = jsonWso2CarpetaPrincipal_(raizId, false);
+    if (!principal) return res;
+    indiceListarHijos_(principal.getId(), null, true).forEach(function(h) {
+      if (h.mimeType !== INDICE_CONFIG.CARPETA_MIME) return;
+      var numero = indiceNormalizarCaso_(h.name);
+      if (numero) res[numero] = { id: h.id, url: indiceUrlCarpeta_(h.id) };
+    });
+  } catch (err) {
+    console.warn('[JSON-WSO2] No se pudo leer la carpeta JSON-WSO2: ' + err.message);
+  }
+  return res;
 }

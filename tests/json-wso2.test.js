@@ -58,7 +58,7 @@ function driveFalso(items) {
         const it = buscar(id);
         if (!it || it.sinAcceso) throw new Error('File not found: ' + id);
         if (op && op.fields === 'description') return { description: it.descripcion || '' };
-        return { id: it.id, name: it.name, modifiedTime: it.modifiedTime, md5Checksum: it.md5Checksum };
+        return { id: it.id, name: it.name, parents: [it.padre], modifiedTime: it.modifiedTime, md5Checksum: it.md5Checksum };
       },
       list: (p) => {
         const padre = /^'([^']+)' in parents/.exec(p.q)[1];
@@ -96,13 +96,15 @@ test('ids de los links a archivos de la columna N', () => {
   ])), [ID('a'), ID('b')]);
 });
 
-test('uno por nombre: queda el mas reciente', () => {
-  const r = gs.jsonWso2UnoPorNombre_([
-    { id: 'a', nombre: 'config.json', modificado: '2026-09-01' },
-    { id: 'b', nombre: 'tarifas.json', modificado: '2026-09-01' },
-    { id: 'c', nombre: 'config.json', modificado: '2026-09-05' }
+test('uno por camino: mismo camino queda el mas reciente; otro camino, los dos', () => {
+  const r = gs.jsonWso2UnoPorCamino_([
+    { id: 'a', nombre: 'config.json', ruta: [], modificado: '2026-09-01' },
+    { id: 'b', nombre: 'api.json', ruta: ['v1.0', 'docs'], modificado: '2026-09-01' },
+    { id: 'c', nombre: 'config.json', ruta: [], modificado: '2026-09-05' },
+    { id: 'd', nombre: 'api.json', ruta: ['v1.0.1', 'docs'], modificado: '2026-08-01' }
   ]);
-  assert.deepStrictEqual(plano(r.map((a) => a.id)), ['c', 'b']);
+  assert.deepStrictEqual(plano(r.map((x) => x.id)), ['c', 'b', 'd']);
+  assert.strictEqual(gs.jsonWso2Clave_({ nombre: 'api.json', ruta: ['v1.0', 'docs'] }), 'v1.0/docs/api.json');
 });
 
 test('celda de la N: carpeta con su link y debajo los que no se copiaron', () => {
@@ -314,4 +316,101 @@ test('envio sin tiempo: la N queda con los links y despues se conserva la carpet
     if (DateReal) gs.Date = DateReal; else delete gs.Date;
     gs.JSON_WSO2_INICIO_ACCION = 0;
   }
+});
+
+test('copiar al caso: repite las subcarpetas y no pierde versiones con el mismo nombre', () => {
+  const d = driveFalso([
+    { id: RAIZ, name: 'Raiz', mimeType: CARP, padre: 'mi' },
+    json('v10', 'api.json', 'otra', 'A', '2026-09-01'),
+    json('v101', 'api.json', 'otra', 'B', '2026-09-05')
+  ]);
+  instalar(d);
+  const r = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '7799', [
+    { id: ID('v10'), nombre: 'api.json', ruta: ['v1.0', 'EI', 'docs'], modificado: '2026-09-01', md5: 'A' },
+    { id: ID('v101'), nombre: 'api.json', ruta: ['v1.0.1', 'EI', 'docs'], modificado: '2026-09-05', md5: 'B' }
+  ], sinLimite));
+  assert.strictEqual(r.carpeta.total, 2);
+  const buscar = (id) => d.items.find((i) => i.id === id);
+  const caminoDe = (it) => {
+    const partes = [];
+    let p = it.padre;
+    while (p && buscar(p).name !== '7799') { partes.unshift(buscar(p).name); p = buscar(p).padre; }
+    return partes.concat([it.name]).join('/');
+  };
+  const copias = d.items.filter((i) => i.name === 'api.json' && i.padre !== 'otra').map(caminoDe).sort();
+  assert.deepStrictEqual(copias, ['v1.0.1/EI/docs/api.json', 'v1.0/EI/docs/api.json']);
+  // Otra vez lo mismo: no se duplica nada.
+  gs.jsonWso2CopiarAlCaso_(RAIZ, '7799', [
+    { id: ID('v10'), nombre: 'api.json', ruta: ['v1.0', 'EI', 'docs'], modificado: '2026-09-01', md5: 'A' }
+  ], sinLimite);
+  assert.strictEqual(d.items.filter((i) => i.name === 'api.json' && i.padre !== 'otra').length, 2);
+  assert.strictEqual(d.items.filter((i) => i.name === 'EI').length, 2);
+});
+
+test('camino dentro del caso: desde la carpeta del caso o desde la carpeta enlazada en la fila', () => {
+  const d = driveFalso([
+    { id: RAIZ, name: 'Raiz', mimeType: CARP, padre: 'mi' },
+    { id: ID('srv'), name: 'Documentacion WSO2', mimeType: CARP, padre: RAIZ },
+    { id: ID('caso'), name: '7799_2', mimeType: CARP, padre: ID('srv') },
+    { id: ID('v'), name: 'v1.0.1', mimeType: CARP, padre: ID('caso') },
+    { id: ID('ei'), name: 'EI', mimeType: CARP, padre: ID('v') },
+    json('j1', 'api.json', ID('ei'), 'A', '2026-09-01'),
+    json('j0', 'suelto.json', ID('caso'), 'B', '2026-09-01'),
+    { id: ID('entrega'), name: 'Entrega', mimeType: CARP, padre: 'otraPersona' },
+    { id: ID('docs'), name: 'docs', mimeType: CARP, padre: ID('entrega') },
+    json('j2', 'orig.json', ID('docs'), 'C', '2026-09-01'),
+    { id: ID('pdf'), name: 'manual.pdf', mimeType: 'application/pdf', padre: ID('caso') }
+  ]);
+  instalar(d);
+  const r = plano(gs.jsonWso2LeerArchivos_([ID('j1'), ID('j0'), ID('j2'), ID('pdf'), ID('borrado')], '7799', [ID('entrega')]));
+  assert.deepStrictEqual(r.archivos.map((a) => [a.nombre, a.ruta.join('/')]),
+    [['api.json', 'v1.0.1/EI'], ['suelto.json', ''], ['orig.json', 'docs']]);
+  assert.deepStrictEqual(r.noLeidos, [ID('pdf'), ID('borrado')]);
+});
+
+test('busqueda: si el caso ya tiene sus JSON en JSON-WSO2, pone esa carpeta en vez del motivo', () => {
+  const d = driveFalso([
+    { id: ID('c9300'), name: '9300', mimeType: CARP, padre: 'wso2' },
+    { id: ID('sub'), name: 'docs', mimeType: CARP, padre: ID('c9300') },
+    json('copia', 'api.json', ID('sub'), 'A', '2026-09-01'),
+    { id: ID('vacia'), name: '5555', mimeType: CARP, padre: 'wso2' }
+  ]);
+  instalar(d);
+  const casos = { 9300: { id: ID('c9300'), url: 'https://c9300' }, 5555: { id: ID('vacia'), url: 'https://vacia' } };
+  const motivo = { links: [], motivo: 'Sin carpeta ni link' };
+  const r = gs.indiceResultadoDesdeWso2_(motivo, '9300', casos);
+  assert.deepStrictEqual(plano(r.links), ['https://c9300']);
+  assert.strictEqual(r.celda.getText(), 'JSON-WSO2/9300 (1 JSON)');
+  // Carpeta vacia, sin carpeta o con links propios: queda como estaba.
+  assert.strictEqual(gs.indiceResultadoDesdeWso2_(motivo, '5555', casos), motivo);
+  assert.strictEqual(gs.indiceResultadoDesdeWso2_(motivo, '7799', casos), motivo);
+  const conLinks = { links: ['https://x'], motivo: null };
+  assert.strictEqual(gs.indiceResultadoDesdeWso2_(conLinks, '9300', casos), conLinks);
+});
+
+test('busqueda: la fila cuya carpeta de JSON-WSO2 ya no existe se vuelve a buscar', () => {
+  const casos = { 9300: { id: 'x', url: 'u' } };
+  const filas = [
+    { fila: 2, textoN: 'JSON-WSO2/9300 (2 JSON)', textoO: 'x' },
+    { fila: 3, textoN: 'JSON-WSO2/7799 (1 JSON)', textoO: 'x' }
+  ];
+  const lista = plano(gs.indiceElegirFilas_(filas, 0, null, casos).map((f) => [f.fila, f.necesitaN, f.reparar]));
+  assert.deepStrictEqual(lista, [[3, true, true]]);
+  // Sin la lista de JSON-WSO2 (no se pudo leer): no se repara nada.
+  assert.deepStrictEqual(plano(gs.indiceElegirFilas_(filas, 0, null, null)), []);
+});
+
+test('textos de la seccion Activadores', () => {
+  const ahora = 100 * 60 * 1000;
+  gs.formatearHoraIndice_ = () => '12:38:00';
+  const t = (nota, de, total) => gs.indiceTextoActivadores_(nota, de, total, ahora);
+  assert.strictEqual(t(null, 0, 3), 'Sin tareas programadas de esta búsqueda; 3 en total (máximo ' +
+    gs.REINTENTOS_CONFIG.MAX_TRIGGERS_ACTIVOS + ').');
+  assert.ok(t({ etapa: 'buscando', activador: { estado: 'programado', en: ahora - 1000, desde: 'panel de Sheets' } }, 1, 3)
+    .startsWith('Siguiente parte: arranca en unos segundos (la dejó lista un clic en el panel).'));
+  assert.ok(t({ etapa: 'buscando', activador: { estado: 'a_la_hora', en: ahora + 3600000, desde: 'activador' } }, 1, 3)
+    .includes('Presiona "Ver avance" para adelantarla (la programó la parte anterior).'));
+  assert.ok(t({ etapa: 'buscando', activador: { estado: 'sin_cupo', en: ahora, desde: 'activador' } }, 0, 20)
+    .includes('hay demasiadas tareas programadas'));
+  assert.strictEqual(t(null, 0, -1), 'No se pudieron leer las tareas programadas.');
 });
