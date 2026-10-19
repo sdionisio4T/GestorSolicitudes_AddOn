@@ -58,7 +58,7 @@ function driveFalso(items) {
         const it = buscar(id);
         if (!it || it.sinAcceso) throw new Error('File not found: ' + id);
         if (op && op.fields === 'description') return { description: it.descripcion || '' };
-        return { id: it.id, name: it.name, parents: [it.padre], trashed: !!it.papelera, modifiedTime: it.modifiedTime, md5Checksum: it.md5Checksum };
+        return { id: it.id, name: it.name, mimeType: it.mimeType, parents: [it.padre], trashed: !!it.papelera, modifiedTime: it.modifiedTime, md5Checksum: it.md5Checksum };
       },
       create: (r) => {
         const nueva = { id: nuevoId(), name: r.name, mimeType: r.mimeType, padre: r.parents[0] };
@@ -428,6 +428,133 @@ test('textos de la seccion Activadores', () => {
   assert.ok(t({ etapa: 'buscando', activador: { estado: 'sin_cupo', en: ahora, desde: 'activador' } }, 0, 20)
     .includes('hay demasiadas tareas programadas'));
   assert.strictEqual(t(null, 0, -1), 'No se pudieron leer las tareas programadas.');
+});
+
+// Hoja completa (columnas A a O) para "Buscar en filas": lee valores y
+// texto enriquecido, y escribe la N y la O.
+function hojaCompleta(filas) {
+  const N = gs.SHEET_COLS.ARCHIVOS_JSON;
+  const O = gs.INDICE_COL_CARPETA;
+  const datos = [new Array(O).fill('')];
+  datos[0][0] = 'Número de caso';
+  filas.forEach((f) => {
+    const r = new Array(O).fill('');
+    r[gs.SHEET_COLS.NUMERO_CASO - 1] = f.caso;
+    r[gs.SHEET_COLS.SERVICIO - 1] = f.servicio || 'Pagos';
+    r[gs.SHEET_COLS.COMPONENTE - 1] = f.componente || 'ESB';
+    r[N - 1] = f.n || '';
+    datos.push(r);
+  });
+  const rich = (t) => gs.SpreadsheetApp.newRichTextValue().setText(String(t)).build();
+  const hoja = {
+    getLastRow: () => datos.length,
+    getRange(fila, col, nFilas = 1, nCols = 1) {
+      const filasDe = (fn) => Array.from({ length: nFilas }, (_, i) =>
+        Array.from({ length: nCols }, (_, j) => fn(datos[fila - 1 + i][col - 1 + j] ?? '')));
+      return {
+        getValues: () => filasDe((v) => v),
+        getRichTextValues: () => filasDe(rich),
+        getValue: () => datos[fila - 1][col - 1] ?? '',
+        setValue(v) { datos[fila - 1][col - 1] = v; return this; },
+        setFontWeight() { return this; },
+        setWrapStrategy() { return this; },
+        setHorizontalAlignment() { return this; },
+        setRichTextValues(valores) {
+          valores.forEach((v, i) => { datos[fila - 1 + i][col - 1] = v[0].getText(); });
+        }
+      };
+    }
+  };
+  gs.SpreadsheetApp.openById = () => ({ getSheetByName: () => hoja });
+  gs.SpreadsheetApp.WrapStrategy = { CLIP: 'CLIP' };
+  gs.SpreadsheetApp.flush = () => {};
+  gs.obtenerSheetTab = () => 'Solicitudes';
+  gs.obtenerCarpetaRaizId = () => RAIZ;
+  gs.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
+  return { n: (r) => datos[r - 1][N - 1], o: (r) => datos[r - 1][O - 1] };
+}
+
+function raizDeFilas() {
+  return [
+    { id: RAIZ, name: 'Raiz', mimeType: CARP, padre: 'mi' },
+    { id: ID('pagos'), name: 'Pagos', mimeType: CARP, padre: RAIZ },
+    { id: ID('p9300'), name: '9300', mimeType: CARP, padre: ID('pagos') },
+    { id: ID('v10'), name: 'v1.0', mimeType: CARP, padre: ID('p9300') },
+    json('cfg', 'config.json', ID('v10'), 'A', '2026-09-01'),
+    json('tar', 'tarifas.json', ID('p9300'), 'B', '2026-09-01'),
+    { id: ID('p7799'), name: '7799', mimeType: CARP, padre: ID('pagos') },
+    json('api', 'api.json', ID('p7799'), 'C', '2026-09-01')
+  ];
+}
+
+test('buscar en filas: copia lo encontrado a JSON-WSO2 y pasa las filas con links', () => {
+  const d = driveFalso(raizDeFilas());
+  instalar(d);
+  const h = hojaCompleta([
+    { caso: '9300' },                        // 2: vacia, su carpeta tiene 2 JSON
+    { caso: '9300' },                        // 3: mismo caso, no copia de nuevo
+    { caso: '7799', n: urlArchivo(ID('api')) }, // 4: ya tenia el link: se pasa
+    { caso: '4444' }                         // 5: sin carpeta: motivo, sin copiar
+  ]);
+  const res = plano(gs.indiceBuscarEnFilas_('sheet', { desde: 2, hasta: 5 }));
+  assert.strictEqual(h.n(2), 'JSON-WSO2/9300 (2 JSON)');
+  assert.strictEqual(h.n(3), 'JSON-WSO2/9300 (2 JSON)');
+  assert.strictEqual(h.o(2), 'Pagos/9300');
+  assert.strictEqual(h.n(4), 'JSON-WSO2/7799 (1 JSON)');
+  assert.strictEqual(h.n(5), 'Sin carpeta ni link');
+  assert.strictEqual(d.items.filter((i) => i.name === 'config.json').length, 2, 'una copia por caso, no una por fila');
+  const wso2 = d.items.find((i) => i.name === 'JSON-WSO2');
+  assert.ok(!d.items.some((i) => i.name === '4444' && i.padre === wso2.id), 'sin JSON no se crea la carpeta del caso');
+  // La copia repite las subcarpetas del caso.
+  const v10Copia = d.items.find((i) => i.name === 'v1.0' && i.padre !== ID('p9300'));
+  assert.ok(d.items.some((i) => i.name === 'config.json' && i.padre === v10Copia.id));
+  assert.strictEqual(res.faltaDesde, null);
+  assert.strictEqual(gs.indiceTextoResultadoFilas_({ desde: 2, hasta: 5 }, res),
+    'Filas 2 a 5: 2 con JSON, 1 pasada(s) a JSON-WSO2, 1 sin JSON (con su motivo), 2 con carpeta en la columna O.');
+});
+
+test('buscar en filas: sin tiempo para copiar deja los links y "Continuar" los pasa', () => {
+  const d = driveFalso(raizDeFilas());
+  instalar(d);
+  const h = hojaCompleta([{ caso: '9300' }, { caso: '7799' }]);
+  const DateReal = gs.Date;
+  let reloj = 1000000;
+  gs.Date = { now: () => reloj };
+  const copiar = d.Drive.Files.copy;
+  try {
+    // La primera copia se lleva el tiempo que queda.
+    d.Drive.Files.copy = (r, id) => { reloj += 16000; return copiar(r, id); };
+    const res = plano(gs.indiceBuscarEnFilas_('sheet', { desde: 2, hasta: 3 }));
+    assert.strictEqual(res.faltaDesde, 2);
+    assert.deepStrictEqual(h.n(2).split('\n').sort(), [urlArchivo(ID('cfg')), urlArchivo(ID('tar'))].sort());
+    assert.strictEqual(h.n(3), '', 'la fila siguiente no se toco');
+    assert.ok(gs.indiceTextoResultadoFilas_({ desde: 2, hasta: 3 }, res).includes('falta desde la fila 2'));
+
+    // "Continuar": desde la fila que falto, con tiempo.
+    d.Drive.Files.copy = copiar;
+    const sigue = plano(gs.indiceBuscarEnFilas_('sheet', { desde: 2, hasta: 3 }));
+    assert.strictEqual(sigue.faltaDesde, null);
+    assert.strictEqual(h.n(2), 'JSON-WSO2/9300 (2 JSON)');
+    assert.strictEqual(h.n(3), 'JSON-WSO2/7799 (1 JSON)');
+    assert.strictEqual(d.items.filter((i) => i.name === 'config.json').length + d.items.filter((i) => i.name === 'tarifas.json').length, 4,
+      'lo copiado antes no se duplica');
+  } finally {
+    d.Drive.Files.copy = copiar;
+    if (DateReal) gs.Date = DateReal; else delete gs.Date;
+  }
+});
+
+test('buscar en filas: un JSON sin acceso deja la fila con su link y lo cuenta', () => {
+  const items = raizDeFilas();
+  items.push({ id: ID('ajena'), name: 'privado.json', mimeType: 'application/json', padre: 'otra', sinAcceso: true });
+  const d = driveFalso(items);
+  instalar(d);
+  const h = hojaCompleta([{ caso: '5555', n: urlArchivo(ID('ajena')) }]);
+  const res = plano(gs.indiceBuscarEnFilas_('sheet', { desde: 2, hasta: 2 }));
+  assert.strictEqual(h.n(2), urlArchivo(ID('ajena')));
+  assert.strictEqual(res.noCopiadas, 1);
+  assert.strictEqual(gs.indiceTextoResultadoFilas_({ desde: 2, hasta: 2 }, res),
+    'Fila 2: 1 con JSON sin copiar a JSON-WSO2 (quedan en "Pasar").');
 });
 
 test('copiar varias filas con la misma memoria: no repite consultas a JSON-WSO2', () => {

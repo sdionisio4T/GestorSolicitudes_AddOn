@@ -441,8 +441,8 @@ function indiceResultadoFila_(fila, arbol, directorio, originales) {
 /**
  * Si una fila se quedaría con un motivo pero su caso ya tiene carpeta con
  * JSON en JSON-WSO2 (por ejemplo, la carpeta del caso en la raíz se borró),
- * el resultado pasa a ser el link a esa carpeta. Las búsquedas no copian
- * nada: solo miran si la carpeta existe.
+ * el resultado pasa a ser el link a esa carpeta. Aquí no se copia nada: solo
+ * se mira si la carpeta existe.
  *   casosWso2: jsonWso2CarpetasDeCasos_
  */
 function indiceResultadoDesdeWso2_(resultado, caso, casosWso2) {
@@ -1567,6 +1567,35 @@ function indiceFilasPorPasar_() {
 }
 
 /**
+ * Copia a JSON-WSO2/<caso>/ los JSON enlazados de una fila (links: URLs de
+ * archivos) y arma la celda nueva de la N. La usan "Pasar JSON a JSON-WSO2"
+ * y "Buscar en filas". quedaMs(): tiempo para copiar; memo:
+ * jsonWso2NuevaMemoria_.
+ * Devuelve { celda, conSinCopiar, carpeta }, { cortado } si se acabó el
+ * tiempo a mitad de la fila, o null si no se copió ninguno.
+ */
+function indiceCopiarFilaAWso2_(raizId, fila, links, quedaMs, memo) {
+  var leidos = jsonWso2LeerArchivos_(jsonWso2IdsDeUrls_(links), fila.caso, fila.ids, memo);
+  var copia = leidos.archivos.length > 0
+    ? jsonWso2CopiarAlCaso_(raizId, fila.caso, leidos.archivos, quedaMs, memo)
+    : null;
+  if (copia && copia.pendientes.length > 0) return { cortado: true };
+  if (!copia || copia.carpeta.total === 0) return null;
+  // Quedan en la celda los links que no se pudieron copiar (sin acceso o
+  // que no son .json).
+  var sinCopiar = copia.fallidos.concat(leidos.noLeidos);
+  var urlsSinCopiar = links.filter(function(u) {
+    var id = jsonWso2IdsDeUrls_([u])[0];
+    return !id || sinCopiar.indexOf(id) !== -1;
+  });
+  return {
+    celda: jsonWso2Celda_(copia.carpeta, urlsSinCopiar),
+    conSinCopiar: urlsSinCopiar.length > 0,
+    carpeta: copia.carpeta
+  };
+}
+
+/**
  * Una parte de "Pasar JSON a JSON-WSO2". margenMs: tiempo que se reserva al
  * final (por defecto MARGEN_FILA_MS; menos cuando corre dentro del clic).
  * Devuelve lo mismo que indiceCorrerBusqueda_: { ocupado, nota } o
@@ -1656,31 +1685,21 @@ function indicePasarJson_(sheetId, presupuestoMs, margenMs) {
         indiceGuardarNota_(sheetId, nota);
       }
 
-      var leidos = jsonWso2LeerArchivos_(jsonWso2IdsDeUrls_(celda.links), f.caso, f.ids, memoWso2);
-      var copia = leidos.archivos.length > 0
-        ? jsonWso2CopiarAlCaso_(raizId, f.caso, leidos.archivos, function() {
-          return quedaMs() - margen;
-        }, memoWso2)
-        : null;
+      var pasada = indiceCopiarFilaAWso2_(raizId, f, celda.links, function() {
+        return quedaMs() - margen;
+      }, memoWso2);
       // Se acabó el tiempo a mitad de la fila: la fila sigue en la parte
       // siguiente (lo que ya se copió no se vuelve a copiar). No es un error.
-      if (copia && copia.pendientes.length > 0) {
+      if (pasada && pasada.cortado) {
         cortado = true;
         break;
       }
-      if (!copia || copia.carpeta.total === 0) {
+      if (!pasada) {
         cuenta.noCopiados = (cuenta.noCopiados || 0) + 1;
         continue;
       }
-      // Quedan en la celda los links que no se pudieron copiar (sin acceso
-      // o que no son .json).
-      var sinCopiar = copia.fallidos.concat(leidos.noLeidos);
-      var urlsSinCopiar = celda.links.filter(function(u) {
-        var id = jsonWso2IdsDeUrls_([u])[0];
-        return !id || sinCopiar.indexOf(id) !== -1;
-      });
-      if (urlsSinCopiar.length > 0) cuenta.noCopiados = (cuenta.noCopiados || 0) + 1;
-      bloque.push({ fila: f.fila, caso: f.caso, servicio: f.servicio, celdaPasada: jsonWso2Celda_(copia.carpeta, urlsSinCopiar) });
+      if (pasada.conSinCopiar) cuenta.noCopiados = (cuenta.noCopiados || 0) + 1;
+      bloque.push({ fila: f.fila, caso: f.caso, servicio: f.servicio, celdaPasada: pasada.celda });
       if (bloque.length >= INDICE_CONFIG.BLOQUE_N && !escribirBloque()) {
         cortado = true;
         break;
@@ -1974,7 +1993,7 @@ var INDICE_NOMBRE_MODO = {
 // que sí lo muestra.
 var INDICE_AYUDA_BOTONES = {
   onBuscarJson: 'Revisa todo el Sheet. Puede tardar unos minutos.',
-  onBuscarRangoJson: 'Para revisar una o pocas filas. Responde al momento.',
+  onBuscarRangoJson: 'Para revisar una o pocas filas. Responde al momento y copia los JSON a JSON-WSO2.',
   onDescartarFilasJson: 'Continuar sigue con las filas que faltaron. Descartar lo olvida; lo ya escrito se queda.',
   onCancelarBusquedaJson: 'Olvida esta búsqueda a medias. Lo ya escrito en las columnas N y O se queda.',
   onPasarJsonWso2: 'Copia a JSON-WSO2 los JSON que ya están en la columna N y deja el link a la carpeta del caso.',
@@ -2347,6 +2366,7 @@ function indiceTextoRango_(rango) {
 // Para revisar unas pocas filas no se recorre la raíz: se va directo a las
 // carpetas de cada fila (su ruta [APIM/]Servicio/Caso dentro de la raíz y
 // los links de las columnas C, D y O) y corre en la misma acción del botón.
+// A diferencia de "Buscar JSON", copia lo que encuentra a JSON-WSO2.
 // No ve .json de carpetas del caso que estén en otra parte de la raíz sin
 // link en la fila: para eso está "Buscar JSON".
 
@@ -2438,11 +2458,13 @@ function indiceBuscarFila_(fila, raizId, hijosDe, originales, cuentaO, quedaMs) 
 }
 
 /**
- * Búsqueda por filas, dentro de la acción del botón. Trabaja las filas del
- * rango que no tienen links en la columna N (vacías o con motivo) y limpia
- * las que tienen links y motivo; las que tienen solo links no se tocan.
- * Si no alcanza el tiempo, escribe lo hecho y dice desde qué fila seguir.
- * Devuelve { solicitudes, trabajadas, cuenta, faltaDesde }.
+ * Búsqueda por filas, dentro de la acción del botón. Busca las filas del
+ * rango que no tienen links en la columna N (vacías o con motivo), copia lo
+ * que encuentra a JSON-WSO2/<caso>/ y escribe la carpeta del caso. Las que
+ * ya tienen links a archivos se pasan a JSON-WSO2 (si no se puede, con
+ * links y motivo se limpian). Si no alcanza el tiempo, escribe lo hecho y
+ * dice desde qué fila seguir.
+ * Devuelve { solicitudes, trabajadas, cuenta, faltaDesde, noCopiadas }.
  */
 function indiceBuscarEnFilas_(sheetId, rango) {
   var inicio = Date.now();
@@ -2470,27 +2492,67 @@ function indiceBuscarEnFilas_(sheetId, rango) {
 
   var filas = indiceLeerFilasCompletas_(hoja, rango.desde, rango.hasta);
   var casosWso2 = jsonWso2CarpetasDeCasos_(raizId);
+  // La copia a JSON-WSO2 usa el mismo presupuesto que las consultas.
+  var quedaCopiaMs = function() {
+    return quedaMs() - INDICE_BUSQUEDA.MARGEN_FILA_MS;
+  };
+  var memoWso2 = jsonWso2NuevaMemoria_();
+  var noCopiadas = 0;
+  // La carpeta del caso recién copiada sirve a las otras filas del caso.
+  var anotarCaso = function(pasada) {
+    casosWso2[pasada.carpeta.caso] = { id: pasada.carpeta.id, url: pasada.carpeta.url };
+  };
   for (var i = 0; i < filas.length; i++) {
     var f = filas[i];
     var celda = indiceAnalizarCeldaN_(f.textoN);
     var encontrado = { resultado: null, carpeta: null };
-    // Con la carpeta de JSON-WSO2 (si existe) o solo con links, no se toca:
-    // los links los pasa "Pasar JSON a JSON-WSO2". Con links y motivo, se
-    // limpia. Si la carpeta que enlaza ya no existe, se vuelve a buscar.
+    // Con la carpeta de JSON-WSO2 (si existe), no se toca. Si la carpeta
+    // que enlaza ya no existe, se vuelve a buscar.
     var reparar = indiceCarpetaWso2Rota_(celda, casosWso2);
     if (celda.carpetas.length > 0 && !reparar) continue;
-    if (celda.links.length > 0 && celda.motivos.length === 0) continue;
-    if (celda.links.length === 0) {
-      if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
+    if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
+      faltaDesde = f.fila;
+      break;
+    }
+    var pasada = null;
+    if (celda.links.length > 0) {
+      // Con links a archivos: se pasan a JSON-WSO2, como en "Pasar JSON a
+      // JSON-WSO2". Si no se pudo copiar ninguno, solo con links no se toca
+      // y con links y motivo se limpia.
+      pasada = indiceCopiarFilaAWso2_(raizId, f, celda.links, quedaCopiaMs, memoWso2);
+      if (pasada && pasada.cortado) {
         faltaDesde = f.fila;
         break;
       }
+      if (pasada) {
+        anotarCaso(pasada);
+        if (pasada.conSinCopiar) noCopiadas++;
+        bloque.push({ fila: f.fila, caso: f.caso, servicio: f.servicio, celdaPasada: pasada.celda });
+        continue;
+      }
+      noCopiadas++;
+      if (celda.motivos.length === 0) continue;
+    } else {
       encontrado = indiceBuscarFila_(f, raizId, hijosDe, originales, cuentaO, quedaMs);
       if (!encontrado) {
         faltaDesde = f.fila;
         break;
       }
       encontrado.resultado = indiceResultadoDesdeWso2_(encontrado.resultado, f.caso, casosWso2);
+      // Los JSON encontrados se copian a JSON-WSO2 y la N enlaza la carpeta.
+      // Si no alcanza el tiempo, la fila queda con los links y la siguiente
+      // vuelta ("Continuar") la pasa.
+      var r = encontrado.resultado;
+      if (r && r.links.length > 0 && !r.celda) {
+        pasada = indiceCopiarFilaAWso2_(raizId, f, r.links, quedaCopiaMs, memoWso2);
+        if (pasada && !pasada.cortado) {
+          r.celda = pasada.celda;
+          anotarCaso(pasada);
+          if (pasada.conSinCopiar) noCopiadas++;
+        } else if (!pasada) {
+          noCopiadas++;
+        }
+      }
     }
     bloque.push({
       fila: f.fila,
@@ -2501,6 +2563,10 @@ function indiceBuscarEnFilas_(sheetId, rango) {
       soloCarpeta: false,
       reparar: reparar
     });
+    if (pasada && pasada.cortado) {
+      faltaDesde = f.fila;
+      break;
+    }
   }
 
   if (bloque.length > 0 && !indiceEscribirBloqueFilas_(ss, bloque, cuenta, true)) {
@@ -2509,7 +2575,7 @@ function indiceBuscarEnFilas_(sheetId, rango) {
   console.log('[Indice] Búsqueda por filas ' + rango.desde + ' a ' + rango.hasta + ': ' + bloque.length +
     ' trabajadas, ' + (cuentaO.carpetas + cuentaO.revisados) + ' consultas a Drive, en ' +
     formatearDuracionIndice_(Date.now() - inicio) + (faltaDesde ? ', falta desde la fila ' + faltaDesde : ''));
-  return { solicitudes: filas.length, trabajadas: bloque.length, cuenta: cuenta, faltaDesde: faltaDesde };
+  return { solicitudes: filas.length, trabajadas: bloque.length, cuenta: cuenta, faltaDesde: faltaDesde, noCopiadas: noCopiadas };
 }
 
 /**
@@ -2518,13 +2584,15 @@ function indiceBuscarEnFilas_(sheetId, rango) {
 function indiceTextoResultadoFilas_(rango, res) {
   var donde = indiceTextoRango_(rango);
   donde = donde.charAt(0).toUpperCase() + donde.substring(1);
-  if (res.trabajadas === 0 && !res.faltaDesde) {
+  if (res.trabajadas === 0 && !res.faltaDesde && !res.noCopiadas) {
     return donde + ': no hay nada que buscar (' +
       (res.solicitudes === 0 ? 'no hay solicitudes' : 'ya tienen sus JSON') + ').';
   }
   var c = res.cuenta || {};
   var partes = [];
   if (c.links) partes.push(c.links + ' con JSON');
+  if (c.pasadas) partes.push(c.pasadas + ' pasada(s) a JSON-WSO2');
+  if (res.noCopiadas) partes.push(res.noCopiadas + ' con JSON sin copiar a JSON-WSO2 (quedan en "Pasar")');
   var motivos = (c.motivo || 0) + (c.mismoMotivo || 0);
   if (motivos) partes.push(motivos + ' sin JSON (con su motivo)');
   if (c.limpiada) partes.push(c.limpiada + ' limpiada(s)');

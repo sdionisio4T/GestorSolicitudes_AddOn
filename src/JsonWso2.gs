@@ -5,8 +5,9 @@
  * el mismo camino de subcarpetas que tiene dentro del caso (v1.0/EI/docs);
  * si en ese camino llega uno con otro contenido, queda el más reciente. La
  * columna N enlaza la carpeta del caso con el texto "JSON-WSO2/<caso> (<n>
- * JSON)". Copian el botón "Pasar JSON a JSON-WSO2", el envío (si le queda
- * tiempo) y los reintentos; las búsquedas solo escriben los links.
+ * JSON)". Copian el botón "Pasar JSON a JSON-WSO2", "Buscar en filas", el
+ * envío (si le queda tiempo) y los reintentos; "Buscar JSON" solo escribe
+ * los links.
  */
 
 var JSON_WSO2 = {

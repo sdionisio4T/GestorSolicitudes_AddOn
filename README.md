@@ -168,7 +168,7 @@ Cualquier línea de la columna N que no sea una URL se toma como motivo. Las cel
 | Botón | Qué hace |
 |---|---|
 | Buscar JSON | Revisa todo el Sheet: trabaja las filas sin links en la columna N, tanto las vacías como las que tienen un motivo (por si ya subieron el JSON o dieron el permiso). El texto del motivo no se interpreta: solo importa si la celda tiene links o no. |
-| Buscar en filas | Con "Desde fila" y "Hasta fila": revisa al momento solo esas filas (ver [Búsqueda por filas](#búsqueda-por-filas)). |
+| Buscar en filas | Con "Desde fila" y "Hasta fila": revisa al momento solo esas filas y copia sus JSON a `JSON-WSO2` (ver [Búsqueda por filas](#búsqueda-por-filas)). |
 | Ver avance | Refresca la tarjeta y deja lista la parte siguiente (ver abajo). |
 | Continuar | Sigue una búsqueda que quedó a medias. |
 | Detener | Para la búsqueda; lo ya escrito se conserva. |
@@ -189,9 +189,11 @@ Para revisar unas pocas filas (por ejemplo, porque ya subieron el JSON o dieron 
 
 Reglas:
 
-- Trabaja las filas del rango con la columna N vacía o con motivo. Las que tienen links no se tocan.
+- Busca las filas del rango con la columna N vacía o con motivo. Lo que encuentra lo copia en el mismo clic a `JSON-WSO2/<caso>/` y en la N escribe la carpeta del caso, por ejemplo `JSON-WSO2/9300 (2 JSON)`.
+- Las filas del rango que ya tienen links a archivos JSON se pasan a `JSON-WSO2`, igual que con "Pasar JSON a JSON-WSO2". Las que ya enlazan su carpeta de `JSON-WSO2` no se tocan.
+- Si un JSON no se puede copiar (sin permiso), su link queda en la N y la fila sigue apareciendo en "Pasar".
 - Para una sola fila, "Hasta fila" queda vacío.
-- Tiene unos 15 segundos para consultar Drive (una acción de tarjeta dura 30). Si el rango no alcanza, escribe lo que hizo y la sección muestra "⚠️ Faltaron las filas X a Y" con las casillas llenas y dos botones: **Continuar** (sigue con las que faltaron) y **Descartar** (lo olvida; lo ya escrito se queda).
+- Tiene unos 15 segundos para consultar Drive y copiar (una acción de tarjeta dura 30). Si se acaba a mitad de una fila, esa fila queda con los links y es la primera de "Continuar"; lo ya copiado no se vuelve a copiar. Si el rango no alcanza, escribe lo que hizo y la sección muestra "⚠️ Faltaron las filas X a Y" con las casillas llenas y dos botones: **Continuar** (sigue con las que faltaron) y **Descartar** (lo olvida; lo ya escrito se queda).
 - No reescribe la pestaña "JSON sin fila" ni usa la nota de la búsqueda completa.
 
 Diferencia con la búsqueda completa: esta no ve un `.json` que esté en una carpeta del caso fuera de su ruta normal y sin link en la fila. Para eso está "Buscar JSON".
@@ -211,10 +213,11 @@ Los JSON de cada caso se copian a `[Raíz]/JSON-WSO2/<caso>/`, y la columna N en
         └── v1.0.1/EI/docs/api.json
 ```
 
-**Cómo llegan ahí (dos pasos)**
+**Cómo llegan ahí**
 
-1. **"Buscar JSON" y "Buscar en filas" solo encuentran los JSON** y escriben en la N los links a los archivos, como siempre. No copian nada, para no alargar la búsqueda.
-2. **"Pasar JSON a JSON-WSO2"** aparece cuando hay filas con links a archivos. Copia esos JSON y cambia la celda por la carpeta. Primero trabaja dentro del clic (unos 15 segundos, alcanza para unas pocas filas) y lo que falte sigue en segundo plano por partes, con el mismo "Ver avance". Mientras corre, la tarjeta muestra "25 de 87 filas pasadas".
+1. **"Buscar JSON" solo encuentra los JSON** y escribe en la N los links a los archivos. No copia nada, para no alargar la búsqueda de todo el Sheet.
+2. **"Buscar en filas" copia en el mismo clic** lo que encuentra (son pocas filas). Ver [Búsqueda por filas](#búsqueda-por-filas).
+3. **"Pasar JSON a JSON-WSO2"** aparece cuando hay filas con links a archivos. Copia esos JSON y cambia la celda por la carpeta. Primero trabaja dentro del clic (unos 15 segundos, alcanza para unas pocas filas) y lo que falte sigue en segundo plano por partes, con el mismo "Ver avance". Mientras corre, la tarjeta muestra "25 de 87 filas pasadas".
 
 El envío y los reintentos de copia sí copian directo: el envío, solo si le quedan al menos 8 segundos de los 30 que dura la acción; los reintentos, como mucho 8 segundos por ronda. Lo que no alcanzan queda como links y aparece en "Pasar".
 
@@ -229,7 +232,7 @@ El envío y los reintentos de copia sí copian directo: el envío, solo si le qu
 
 - No la recorren para buscar casos, porque solo tiene copias.
 - Si una fila se quedaría con un motivo pero su caso ya tiene JSON en `JSON-WSO2/<caso>/`, escriben el link a esa carpeta en vez del motivo.
-- Si una fila enlaza una carpeta de `JSON-WSO2` que ya no existe (se borró), la vuelven a buscar; después "Pasar" la crea de nuevo.
+- Si una fila enlaza una carpeta de `JSON-WSO2` que ya no existe (se borró), la vuelven a buscar. "Buscar en filas" la crea de nuevo en el mismo clic; con "Buscar JSON", la crea después "Pasar".
 
 Las copias quedan a nombre de quien las crea. El ID de la carpeta `JSON-WSO2` se guarda en las propiedades del script (`JSON_WSO2_ID_<raíz>`). Código en `src/JsonWso2.gs`.
 
