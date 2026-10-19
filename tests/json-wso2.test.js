@@ -25,6 +25,7 @@ function driveFalso(items) {
     getId: () => it.id,
     getUrl: () => 'https://drive.google.com/drive/folders/' + it.id,
     isTrashed: () => !!it.papelera,
+    setTrashed: (v) => { it.papelera = v; },
     getFoldersByName: (n) => iterador(items.filter((i) => i.padre === it.id && i.mimeType === CARP && i.name === n).map(carpeta)),
     createFolder: (n) => {
       const nueva = { id: nuevoId(), name: n, mimeType: CARP, padre: it.id };
@@ -95,11 +96,28 @@ const json = (id, name, padre, md5, mod, extra) => ({
 const sinLimite = () => 600000;
 
 test('linea de la carpeta en la columna N', () => {
-  assert.strictEqual(gs.jsonWso2TextoCarpeta_('9300', 2), 'JSON-WSO2/9300 (2 JSON)');
+  assert.strictEqual(gs.jsonWso2TextoCarpeta_('9300_PROD', 2), 'JSON-WSO2/9300_PROD (2 JSON)');
+  assert.strictEqual(gs.jsonWso2EsLineaCarpeta_('JSON-WSO2/9300_PROD (2 JSON)'), true);
+  assert.strictEqual(gs.jsonWso2EsLineaCarpeta_('  JSON-WSO2/9300_SIN_AMBIENTE (12 JSON) '), true);
+  // La de antes, solo por caso, tambien se reconoce.
   assert.strictEqual(gs.jsonWso2EsLineaCarpeta_('JSON-WSO2/9300 (2 JSON)'), true);
-  assert.strictEqual(gs.jsonWso2EsLineaCarpeta_('  JSON-WSO2/9300 (12 JSON) '), true);
   assert.strictEqual(gs.jsonWso2EsLineaCarpeta_('Sin carpeta ni link'), false);
   assert.strictEqual(gs.jsonWso2EsLineaCarpeta_('https://drive.google.com/file/d/x/view'), false);
+  assert.deepStrictEqual(plano(gs.jsonWso2LeerLinea_('JSON-WSO2/9300_PREPROD (3 JSON)')),
+    { nombre: '9300_PREPROD', caso: '9300', ambiente: 'PREPROD', total: 3, vieja: false });
+  assert.deepStrictEqual(plano(gs.jsonWso2LeerLinea_('JSON-WSO2/9300 (2 JSON)')),
+    { nombre: '9300', caso: '9300', ambiente: '', total: 2, vieja: true });
+  assert.strictEqual(gs.jsonWso2LeerLinea_('otra cosa'), null);
+});
+
+test('nombre de la carpeta: caso y codigo del ambiente de la columna F', () => {
+  const n = (amb) => gs.jsonWso2NombreCarpeta_('9300', amb);
+  assert.strictEqual(n('Producción'), '9300_PROD');
+  assert.strictEqual(n('Preproducción'), '9300_PREPROD');
+  assert.strictEqual(n('Pruebas'), '9300_PRUEBAS');
+  assert.strictEqual(n('  produccion '), '9300_PROD', 'sin tilde ni mayusculas');
+  assert.strictEqual(n(''), '9300_SIN_AMBIENTE');
+  assert.strictEqual(n('Otro'), '9300_SIN_AMBIENTE');
 });
 
 test('ids de los links a archivos de la columna N', () => {
@@ -120,14 +138,14 @@ test('uno por camino: mismo camino queda el mas reciente; otro camino, los dos',
 });
 
 test('celda de la N: carpeta con su link y debajo los que no se copiaron', () => {
-  const rich = gs.jsonWso2Celda_({ url: 'https://carpeta', caso: '9300', total: 2 }, ['https://drive.google.com/file/d/p/view']);
-  assert.strictEqual(rich.getText(), 'JSON-WSO2/9300 (2 JSON)\nhttps://drive.google.com/file/d/p/view');
+  const rich = gs.jsonWso2Celda_({ url: 'https://carpeta', nombre: '9300_PROD', total: 2 }, ['https://drive.google.com/file/d/p/view']);
+  assert.strictEqual(rich.getText(), 'JSON-WSO2/9300_PROD (2 JSON)\nhttps://drive.google.com/file/d/p/view');
   const runs = rich.getRuns().filter((r) => r.getLinkUrl());
   assert.deepStrictEqual(runs.map((r) => [r.getText(), r.getLinkUrl()]),
-    [['JSON-WSO2/9300 (2 JSON)', 'https://carpeta'], ['https://drive.google.com/file/d/p/view', 'https://drive.google.com/file/d/p/view']]);
+    [['JSON-WSO2/9300_PROD (2 JSON)', 'https://carpeta'], ['https://drive.google.com/file/d/p/view', 'https://drive.google.com/file/d/p/view']]);
 });
 
-test('copiar al caso: crea JSON-WSO2/<caso>, uno por nombre, y no duplica', () => {
+test('copiar al caso: crea JSON-WSO2/<caso>_<ambiente>, uno por nombre, y no duplica', () => {
   const d = driveFalso([
     { id: RAIZ, name: 'Raiz', mimeType: CARP, padre: 'mi' },
     json('j1', 'config.json', 'otra', 'A', '2026-09-01'),
@@ -138,20 +156,26 @@ test('copiar al caso: crea JSON-WSO2/<caso>, uno por nombre, y no duplica', () =
     { id: ID('j1'), nombre: 'config.json', modificado: '2026-09-01', md5: 'A' },
     { id: ID('j2'), nombre: 'tarifas.json', modificado: '2026-09-01', md5: 'B' }
   ];
-  const r = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '09300', archivos, sinLimite));
+  const r = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '09300', 'Producción', archivos, sinLimite));
   assert.strictEqual(r.carpeta.caso, '9300');
+  assert.strictEqual(r.carpeta.nombre, '9300_PROD');
   assert.strictEqual(r.carpeta.total, 2);
   assert.deepStrictEqual(r.pendientes, []);
   const principal = d.items.find((i) => i.name === 'JSON-WSO2');
   assert.strictEqual(principal.padre, RAIZ);
   assert.ok(Object.values(props).includes(principal.id));
-  const delCaso = d.items.find((i) => i.name === '9300' && i.padre === principal.id);
+  const delCaso = d.items.find((i) => i.name === '9300_PROD' && i.padre === principal.id);
   assert.strictEqual(d.items.filter((i) => i.padre === delCaso.id).length, 2);
-  // Otra fila del mismo caso con el mismo JSON: no se copia otra vez.
-  const otra = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', archivos.slice(0, 1), sinLimite));
+  // Otra fila del mismo caso y ambiente con el mismo JSON: no se copia otra vez.
+  const otra = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', 'Producción', archivos.slice(0, 1), sinLimite));
   assert.strictEqual(otra.carpeta.total, 2);
   assert.strictEqual(d.items.filter((i) => i.padre === delCaso.id).length, 2);
-  assert.strictEqual(d.items.filter((i) => i.name === '9300').length, 1);
+  assert.strictEqual(d.items.filter((i) => i.name === '9300_PROD').length, 1);
+  // Otro ambiente del mismo caso: su propia carpeta y su propia copia.
+  const pruebas = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', 'Pruebas', archivos.slice(0, 1), sinLimite));
+  assert.strictEqual(pruebas.carpeta.nombre, '9300_PRUEBAS');
+  assert.strictEqual(pruebas.carpeta.total, 1);
+  assert.strictEqual(d.items.filter((i) => i.name === 'config.json' && i.padre !== 'otra').length, 2);
 });
 
 test('copiar al caso: mismo nombre con otro contenido, reemplaza solo si es mas reciente', () => {
@@ -163,13 +187,13 @@ test('copiar al caso: mismo nombre con otro contenido, reemplaza solo si es mas 
   ]);
   instalar(d);
   const a = (id, mod, md5) => [{ id: ID(id), nombre: 'config.json', modificado: mod, md5 }];
-  gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', a('viejo', '2026-09-01', 'A'), sinLimite);
+  gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', 'Producción', a('viejo', '2026-09-01', 'A'), sinLimite);
   const copia = () => d.items.find((i) => i.name === 'config.json' && i.descripcion !== undefined && i.padre !== 'otra');
   const idCopia = copia().id;
-  gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', a('nuevo', '2026-09-10', 'B'), sinLimite);
+  gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', 'Producción', a('nuevo', '2026-09-10', 'B'), sinLimite);
   assert.strictEqual(copia().contenido, 'c-B');
   assert.strictEqual(copia().id, idCopia, 'se reemplaza el contenido sobre el mismo archivo');
-  gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', a('antiguo', '2026-08-01', 'C'), sinLimite);
+  gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', 'Producción', a('antiguo', '2026-08-01', 'C'), sinLimite);
   assert.strictEqual(copia().contenido, 'c-B', 'uno mas viejo no reemplaza');
 });
 
@@ -184,16 +208,16 @@ test('copiar al caso: sin tiempo queda pendiente; sin acceso, fallido', () => {
     { id: ID('j1'), nombre: 'a.json', modificado: '2026-09-01', md5: 'A' },
     { id: ID('j2'), nombre: 'b.json', modificado: '2026-09-01', md5: 'B' }
   ];
-  const conAcceso = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', archivos, sinLimite));
+  const conAcceso = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', 'Producción', archivos, sinLimite));
   // Sin acceso es un error (fallidos); sin tiempo, solo queda pendiente.
   assert.deepStrictEqual(conAcceso.fallidos, [ID('j2')]);
   assert.deepStrictEqual(conAcceso.pendientes, []);
   assert.strictEqual(conAcceso.carpeta.total, 1);
-  const sinTiempo = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '7799', archivos, () => 0));
+  const sinTiempo = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '7799', 'Producción', archivos, () => 0));
   assert.deepStrictEqual(sinTiempo.pendientes, [ID('j1'), ID('j2')]);
   assert.deepStrictEqual(sinTiempo.fallidos, []);
   assert.strictEqual(sinTiempo.carpeta.total, 0);
-  assert.strictEqual(gs.jsonWso2CopiarAlCaso_(RAIZ, 'abc', archivos, sinLimite), null);
+  assert.strictEqual(gs.jsonWso2CopiarAlCaso_(RAIZ, 'abc', 'Producción', archivos, sinLimite), null);
 });
 
 test('tiempo para copiar en un envio: solo si quedan 8 segundos', () => {
@@ -217,9 +241,13 @@ test('tiempo para copiar en un envio: solo si quedan 8 segundos', () => {
 });
 
 test('columna N: la carpeta de JSON-WSO2 cuenta como lista', () => {
-  const linea = 'JSON-WSO2/9300 (2 JSON)';
+  const linea = 'JSON-WSO2/9300_PROD (2 JSON)';
   const celda = plano(gs.indiceAnalizarCeldaN_(linea + '\nhttps://drive.google.com/file/d/x/view'));
-  assert.deepStrictEqual(celda, { links: ['https://drive.google.com/file/d/x/view'], carpetas: [linea], motivos: [] });
+  assert.deepStrictEqual(celda, { links: ['https://drive.google.com/file/d/x/view'], carpetas: [linea], motivos: [], viejas: [] });
+  // La carpeta de antes (solo por caso) tambien cuenta como lista para las
+  // busquedas, pero queda anotada para "Pasar".
+  const vieja = plano(gs.indiceAnalizarCeldaN_('JSON-WSO2/9300 (2 JSON)'));
+  assert.deepStrictEqual(vieja.viejas, ['JSON-WSO2/9300 (2 JSON)']);
   assert.strictEqual(gs.indiceDecidirCeldaN_(linea, { links: ['https://y'], motivo: null }, true).accion, 'nada');
   const filas = [
     { fila: 2, textoN: linea, textoO: 'x' },
@@ -229,14 +257,15 @@ test('columna N: la carpeta de JSON-WSO2 cuenta como lista', () => {
   assert.deepStrictEqual(plano(gs.indiceElegirFilas_(filas, 0, null).map((f) => f.fila)), [3, 4]);
 });
 
-test('filas por pasar: las que tienen links a archivos en la N', () => {
+test('filas por pasar: links a archivos o la carpeta de antes en la N', () => {
   assert.strictEqual(gs.indiceContarPorPasar_([
     ['https://drive.google.com/file/d/a/view'],
-    ['JSON-WSO2/9300 (1 JSON)'],
-    ['JSON-WSO2/9300 (1 JSON)\nhttps://drive.google.com/file/d/b/view'],
+    ['JSON-WSO2/9300_PROD (1 JSON)'],
+    ['JSON-WSO2/9300_PROD (1 JSON)\nhttps://drive.google.com/file/d/b/view'],
+    ['JSON-WSO2/7799 (2 JSON)'],
     ['Sin carpeta ni link'],
     ['']
-  ]), 2);
+  ]), 3);
 });
 
 test('la busqueda no recorre la carpeta JSON-WSO2 de la raiz', () => {
@@ -268,6 +297,7 @@ function sheetFalso(filas) {
   const clave = (r, c) => r + ':' + c;
   Object.keys(filas).forEach((r) => {
     celdas[clave(r, gs.SHEET_COLS.NUMERO_CASO)] = { valor: filas[r].caso };
+    celdas[clave(r, gs.SHEET_COLS.AMBIENTE)] = { valor: filas[r].ambiente || '' };
     celdas[clave(r, gs.SHEET_COLS.ARCHIVOS_JSON)] = filas[r].n ? { valor: filas[r].n.getText(), rich: filas[r].n } : { valor: '' };
   });
   const celda = (r, c) => {
@@ -293,12 +323,29 @@ test('envio y reintentos: copian a JSON-WSO2 y la N enlaza la carpeta del caso',
   instalar(d);
   gs.obtenerCarpetaRaizId = () => RAIZ;
   gs.JSON_WSO2_INICIO_ACCION = 0;
-  const hoja = sheetFalso({ 5: { caso: '9300' }, 6: { caso: '9300' } });
+  const hoja = sheetFalso({ 5: { caso: '9300', ambiente: 'Pruebas' }, 6: { caso: '9300', ambiente: 'Pruebas' } });
   gs.agregarJsonAFilas_(hoja, [5, 6], [urlArchivo(ID('e1')), urlArchivo(ID('e2'))]);
   [5, 6].forEach((r) => {
-    assert.strictEqual(hoja.celda(r, gs.SHEET_COLS.ARCHIVOS_JSON).getValue(), 'JSON-WSO2/9300 (2 JSON)');
+    assert.strictEqual(hoja.celda(r, gs.SHEET_COLS.ARCHIVOS_JSON).getValue(), 'JSON-WSO2/9300_PRUEBAS (2 JSON)');
   });
   assert.strictEqual(d.items.filter((i) => i.name === 'config.json').length, 2, 'una copia por nombre, no una por fila');
+});
+
+test('envio: una fila con la carpeta de antes la conserva y deja los links para "Pasar"', () => {
+  const d = driveFalso([
+    { id: RAIZ, name: 'Raiz', mimeType: CARP, padre: 'mi' },
+    json('e1', 'config.json', 'envio', 'A', '2026-09-01')
+  ]);
+  instalar(d);
+  gs.obtenerCarpetaRaizId = () => RAIZ;
+  gs.JSON_WSO2_INICIO_ACCION = 0;
+  const hoja = sheetFalso({
+    5: { caso: '9300', ambiente: 'Producción', n: gs.jsonWso2Celda_({ url: 'https://vieja', nombre: '9300', total: 2 }, []) }
+  });
+  gs.agregarJsonAFilas_(hoja, [5], [urlArchivo(ID('e1'))]);
+  const n = hoja.celda(5, gs.SHEET_COLS.ARCHIVOS_JSON);
+  assert.strictEqual(n.getValue(), 'JSON-WSO2/9300 (2 JSON)\n' + urlArchivo(ID('e1')));
+  assert.strictEqual(n.getRichTextValue().getRuns()[0].getLinkUrl(), 'https://vieja');
 });
 
 test('envio sin tiempo: la N queda con los links y despues se conserva la carpeta', () => {
@@ -321,11 +368,11 @@ test('envio sin tiempo: la N queda con los links y despues se conserva la carpet
     // Una fila que ya tenia la carpeta (reintento anterior) y llega otro
     // JSON sin tiempo: la carpeta se queda y el link nuevo va debajo.
     const conCarpeta = sheetFalso({
-      7: { caso: '9300', n: gs.jsonWso2Celda_({ url: 'https://carpeta', caso: '9300', total: 1 }, []) }
+      7: { caso: '9300', ambiente: 'Producción', n: gs.jsonWso2Celda_({ url: 'https://carpeta', nombre: '9300_PROD', total: 1 }, []) }
     });
     gs.agregarJsonAFilas_(conCarpeta, [7], [urlArchivo(ID('e1'))]);
     const n = conCarpeta.celda(7, gs.SHEET_COLS.ARCHIVOS_JSON);
-    assert.strictEqual(n.getValue(), 'JSON-WSO2/9300 (1 JSON)\n' + urlArchivo(ID('e1')));
+    assert.strictEqual(n.getValue(), 'JSON-WSO2/9300_PROD (1 JSON)\n' + urlArchivo(ID('e1')));
     assert.strictEqual(n.getRichTextValue().getRuns()[0].getLinkUrl(), 'https://carpeta');
   } finally {
     if (DateReal) gs.Date = DateReal; else delete gs.Date;
@@ -340,7 +387,7 @@ test('copiar al caso: repite las subcarpetas y no pierde versiones con el mismo 
     json('v101', 'api.json', 'otra', 'B', '2026-09-05')
   ]);
   instalar(d);
-  const r = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '7799', [
+  const r = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '7799', 'Producción', [
     { id: ID('v10'), nombre: 'api.json', ruta: ['v1.0', 'EI', 'docs'], modificado: '2026-09-01', md5: 'A' },
     { id: ID('v101'), nombre: 'api.json', ruta: ['v1.0.1', 'EI', 'docs'], modificado: '2026-09-05', md5: 'B' }
   ], sinLimite));
@@ -349,13 +396,13 @@ test('copiar al caso: repite las subcarpetas y no pierde versiones con el mismo 
   const caminoDe = (it) => {
     const partes = [];
     let p = it.padre;
-    while (p && buscar(p).name !== '7799') { partes.unshift(buscar(p).name); p = buscar(p).padre; }
+    while (p && buscar(p).name !== '7799_PROD') { partes.unshift(buscar(p).name); p = buscar(p).padre; }
     return partes.concat([it.name]).join('/');
   };
   const copias = d.items.filter((i) => i.name === 'api.json' && i.padre !== 'otra').map(caminoDe).sort();
   assert.deepStrictEqual(copias, ['v1.0.1/EI/docs/api.json', 'v1.0/EI/docs/api.json']);
   // Otra vez lo mismo: no se duplica nada.
-  gs.jsonWso2CopiarAlCaso_(RAIZ, '7799', [
+  gs.jsonWso2CopiarAlCaso_(RAIZ, '7799', 'Producción', [
     { id: ID('v10'), nombre: 'api.json', ruta: ['v1.0', 'EI', 'docs'], modificado: '2026-09-01', md5: 'A' }
   ], sinLimite);
   assert.strictEqual(d.items.filter((i) => i.name === 'api.json' && i.padre !== 'otra').length, 2);
@@ -385,29 +432,39 @@ test('camino dentro del caso: desde la carpeta del caso o desde la carpeta enlaz
 
 test('busqueda: si el caso ya tiene sus JSON en JSON-WSO2, pone esa carpeta en vez del motivo', () => {
   const d = driveFalso([
-    { id: ID('c9300'), name: '9300', mimeType: CARP, padre: 'wso2' },
+    { id: ID('c9300'), name: '9300_PROD', mimeType: CARP, padre: 'wso2' },
     { id: ID('sub'), name: 'docs', mimeType: CARP, padre: ID('c9300') },
     json('copia', 'api.json', ID('sub'), 'A', '2026-09-01'),
-    { id: ID('vacia'), name: '5555', mimeType: CARP, padre: 'wso2' }
+    { id: ID('vacia'), name: '5555_PROD', mimeType: CARP, padre: 'wso2' },
+    { id: ID('v7799'), name: '7799', mimeType: CARP, padre: 'wso2' },
+    json('copia2', 'b.json', ID('v7799'), 'B', '2026-09-01')
   ]);
   instalar(d);
-  const casos = { 9300: { id: ID('c9300'), url: 'https://c9300' }, 5555: { id: ID('vacia'), url: 'https://vacia' } };
+  const casos = {
+    '9300_PROD': { id: ID('c9300'), url: 'https://c9300' },
+    '5555_PROD': { id: ID('vacia'), url: 'https://vacia' },
+    7799: { id: ID('v7799'), url: 'https://v7799' }
+  };
   const motivo = { links: [], motivo: 'Sin carpeta ni link' };
-  const r = gs.indiceResultadoDesdeWso2_(motivo, '9300', casos);
+  const r = gs.indiceResultadoDesdeWso2_(motivo, '9300', 'Producción', casos);
   assert.deepStrictEqual(plano(r.links), ['https://c9300']);
-  assert.strictEqual(r.celda.getText(), 'JSON-WSO2/9300 (1 JSON)');
+  assert.strictEqual(r.celda.getText(), 'JSON-WSO2/9300_PROD (1 JSON)');
+  // Otro ambiente del caso no tiene carpeta: queda el motivo.
+  assert.strictEqual(gs.indiceResultadoDesdeWso2_(motivo, '9300', 'Pruebas', casos), motivo);
+  // Sin la de su ambiente, usa la de antes (solo por caso); "Pasar" la pasa despues.
+  assert.strictEqual(gs.indiceResultadoDesdeWso2_(motivo, '7799', 'Pruebas', casos).celda.getText(), 'JSON-WSO2/7799 (1 JSON)');
   // Carpeta vacia, sin carpeta o con links propios: queda como estaba.
-  assert.strictEqual(gs.indiceResultadoDesdeWso2_(motivo, '5555', casos), motivo);
-  assert.strictEqual(gs.indiceResultadoDesdeWso2_(motivo, '7799', casos), motivo);
+  assert.strictEqual(gs.indiceResultadoDesdeWso2_(motivo, '5555', 'Producción', casos), motivo);
+  assert.strictEqual(gs.indiceResultadoDesdeWso2_(motivo, '4444', 'Producción', casos), motivo);
   const conLinks = { links: ['https://x'], motivo: null };
-  assert.strictEqual(gs.indiceResultadoDesdeWso2_(conLinks, '9300', casos), conLinks);
+  assert.strictEqual(gs.indiceResultadoDesdeWso2_(conLinks, '9300', 'Producción', casos), conLinks);
 });
 
 test('busqueda: la fila cuya carpeta de JSON-WSO2 ya no existe se vuelve a buscar', () => {
-  const casos = { 9300: { id: 'x', url: 'u' } };
+  const casos = { '9300_PROD': { id: 'x', url: 'u' } };
   const filas = [
-    { fila: 2, textoN: 'JSON-WSO2/9300 (2 JSON)', textoO: 'x' },
-    { fila: 3, textoN: 'JSON-WSO2/7799 (1 JSON)', textoO: 'x' }
+    { fila: 2, textoN: 'JSON-WSO2/9300_PROD (2 JSON)', textoO: 'x' },
+    { fila: 3, textoN: 'JSON-WSO2/7799_PROD (1 JSON)', textoO: 'x' }
   ];
   const lista = plano(gs.indiceElegirFilas_(filas, 0, null, casos).map((f) => [f.fila, f.necesitaN, f.reparar]));
   assert.deepStrictEqual(lista, [[3, true, true]]);
@@ -441,6 +498,7 @@ function hojaCompleta(filas) {
     const r = new Array(O).fill('');
     r[gs.SHEET_COLS.NUMERO_CASO - 1] = f.caso;
     r[gs.SHEET_COLS.SERVICIO - 1] = f.servicio || 'Pagos';
+    r[gs.SHEET_COLS.AMBIENTE - 1] = f.ambiente || 'Producción';
     r[gs.SHEET_COLS.COMPONENTE - 1] = f.componente || 'ESB';
     r[N - 1] = f.n || '';
     datos.push(r);
@@ -491,26 +549,66 @@ test('buscar en filas: copia lo encontrado a JSON-WSO2 y pasa las filas con link
   const d = driveFalso(raizDeFilas());
   instalar(d);
   const h = hojaCompleta([
-    { caso: '9300' },                        // 2: vacia, su carpeta tiene 2 JSON
-    { caso: '9300' },                        // 3: mismo caso, no copia de nuevo
+    { caso: '9300' },                           // 2: vacia, su carpeta tiene 2 JSON
+    { caso: '9300', ambiente: 'Pruebas' },      // 3: mismo caso, otro ambiente: su propia copia
     { caso: '7799', n: urlArchivo(ID('api')) }, // 4: ya tenia el link: se pasa
-    { caso: '4444' }                         // 5: sin carpeta: motivo, sin copiar
+    { caso: '4444' },                           // 5: sin carpeta: motivo, sin copiar
+    { caso: '9300' }                            // 6: mismo caso y ambiente que la 2: no copia de nuevo
   ]);
-  const res = plano(gs.indiceBuscarEnFilas_('sheet', { desde: 2, hasta: 5 }));
-  assert.strictEqual(h.n(2), 'JSON-WSO2/9300 (2 JSON)');
-  assert.strictEqual(h.n(3), 'JSON-WSO2/9300 (2 JSON)');
+  const res = plano(gs.indiceBuscarEnFilas_('sheet', { desde: 2, hasta: 6 }));
+  assert.strictEqual(h.n(2), 'JSON-WSO2/9300_PROD (2 JSON)');
+  assert.strictEqual(h.n(3), 'JSON-WSO2/9300_PRUEBAS (2 JSON)');
+  assert.strictEqual(h.n(6), 'JSON-WSO2/9300_PROD (2 JSON)');
   assert.strictEqual(h.o(2), 'Pagos/9300');
-  assert.strictEqual(h.n(4), 'JSON-WSO2/7799 (1 JSON)');
+  assert.strictEqual(h.n(4), 'JSON-WSO2/7799_PROD (1 JSON)');
   assert.strictEqual(h.n(5), 'Sin carpeta ni link');
-  assert.strictEqual(d.items.filter((i) => i.name === 'config.json').length, 2, 'una copia por caso, no una por fila');
+  assert.strictEqual(d.items.filter((i) => i.name === 'config.json').length, 3, 'el original y una copia por ambiente');
   const wso2 = d.items.find((i) => i.name === 'JSON-WSO2');
-  assert.ok(!d.items.some((i) => i.name === '4444' && i.padre === wso2.id), 'sin JSON no se crea la carpeta del caso');
+  assert.ok(!d.items.some((i) => /^4444/.test(i.name) && i.padre === wso2.id), 'sin JSON no se crea la carpeta del caso');
   // La copia repite las subcarpetas del caso.
   const v10Copia = d.items.find((i) => i.name === 'v1.0' && i.padre !== ID('p9300'));
   assert.ok(d.items.some((i) => i.name === 'config.json' && i.padre === v10Copia.id));
   assert.strictEqual(res.faltaDesde, null);
-  assert.strictEqual(gs.indiceTextoResultadoFilas_({ desde: 2, hasta: 5 }, res),
-    'Filas 2 a 5: 2 con JSON, 1 pasada(s) a JSON-WSO2, 1 sin JSON (con su motivo), 2 con carpeta en la columna O.');
+  assert.strictEqual(gs.indiceTextoResultadoFilas_({ desde: 2, hasta: 6 }, res),
+    'Filas 2 a 6: 3 con JSON, 1 pasada(s) a JSON-WSO2, 1 sin JSON (con su motivo), 3 con carpeta en la columna O.');
+});
+
+test('carpetas de antes: se pasan a la carpeta del ambiente de cada fila y despues van a la papelera', () => {
+  const items = raizDeFilas();
+  items.push(
+    { id: ID('wso2'), name: 'JSON-WSO2', mimeType: CARP, padre: RAIZ },
+    { id: ID('viejo'), name: '9300', mimeType: CARP, padre: ID('wso2') },
+    { id: ID('vsub'), name: 'v1.0', mimeType: CARP, padre: ID('viejo') },
+    json('cv', 'config.json', ID('vsub'), 'A', '2026-09-03', { descripcion: 'Copia de ' + ID('cfg') + '; modificado:2026-09-01' })
+  );
+  const d = driveFalso(items);
+  instalar(d);
+  const vieja = 'JSON-WSO2/9300 (1 JSON)';
+  const h = hojaCompleta([
+    { caso: '9300', n: vieja },
+    { caso: '9300', ambiente: 'Pruebas', n: vieja }
+  ]);
+  const viejo = () => d.items.find((i) => i.id === ID('viejo'));
+
+  // Solo la fila 2: la 3 todavia enlaza la carpeta de antes, no se borra.
+  gs.indiceBuscarEnFilas_('sheet', { desde: 2, hasta: 2 });
+  assert.strictEqual(h.n(2), 'JSON-WSO2/9300_PROD (1 JSON)');
+  assert.strictEqual(h.n(3), vieja);
+  assert.ok(!viejo().papelera);
+
+  // La fila 3: ya ninguna la enlaza, va a la papelera.
+  const res = plano(gs.indiceBuscarEnFilas_('sheet', { desde: 3, hasta: 3 }));
+  assert.strictEqual(h.n(3), 'JSON-WSO2/9300_PRUEBAS (1 JSON)');
+  assert.strictEqual(viejo().papelera, true);
+  assert.ok(gs.indiceTextoResultadoFilas_({ desde: 3, hasta: 3 }, res).includes('1 carpeta(s) de antes a la papelera'));
+
+  // Cada copia nueva repite el camino y conserva de que original salio.
+  const nuevas = d.items.filter((i) => i.name === 'config.json' && i.padre !== ID('v10') && i.padre !== ID('vsub'));
+  assert.strictEqual(nuevas.length, 2);
+  nuevas.forEach((c) => {
+    assert.strictEqual(d.items.find((i) => i.id === c.padre).name, 'v1.0');
+    assert.strictEqual(c.descripcion, 'Copia de ' + ID('cfg') + '; modificado:2026-09-01');
+  });
 });
 
 test('buscar en filas: sin tiempo para copiar deja los links y "Continuar" los pasa', () => {
@@ -534,8 +632,8 @@ test('buscar en filas: sin tiempo para copiar deja los links y "Continuar" los p
     d.Drive.Files.copy = copiar;
     const sigue = plano(gs.indiceBuscarEnFilas_('sheet', { desde: 2, hasta: 3 }));
     assert.strictEqual(sigue.faltaDesde, null);
-    assert.strictEqual(h.n(2), 'JSON-WSO2/9300 (2 JSON)');
-    assert.strictEqual(h.n(3), 'JSON-WSO2/7799 (1 JSON)');
+    assert.strictEqual(h.n(2), 'JSON-WSO2/9300_PROD (2 JSON)');
+    assert.strictEqual(h.n(3), 'JSON-WSO2/7799_PROD (1 JSON)');
     assert.strictEqual(d.items.filter((i) => i.name === 'config.json').length + d.items.filter((i) => i.name === 'tarifas.json').length, 4,
       'lo copiado antes no se duplica');
   } finally {
@@ -569,9 +667,9 @@ test('copiar varias filas con la misma memoria: no repite consultas a JSON-WSO2'
   d.Drive.Files.list = (p) => { listados++; return listar(p); };
   const memo = gs.jsonWso2NuevaMemoria_();
   const a = (id, n) => [{ id: ID(id), nombre: n, ruta: [], modificado: '2026-09-01', md5: id.toUpperCase() }];
-  gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', a('a', 'a.json'), sinLimite, memo);
+  gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', 'Producción', a('a', 'a.json'), sinLimite, memo);
   const primera = listados;
-  const r = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', a('b', 'b.json'), sinLimite, memo));
+  const r = plano(gs.jsonWso2CopiarAlCaso_(RAIZ, '9300', 'Producción', a('b', 'b.json'), sinLimite, memo));
   assert.strictEqual(listados, primera, 'la segunda fila del caso no vuelve a listar nada');
   assert.strictEqual(r.carpeta.total, 2);
   // La copia lleva su descripcion en la misma consulta.

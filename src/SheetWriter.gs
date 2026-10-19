@@ -1044,9 +1044,11 @@ function construirCeldaConEnlaces(valorCampo) {
 /**
  * Escribe en la columna Archivos JSON (N) de las filas dadas los .json que
  * copió el envío o un reintento. Si hay tiempo, los copia también a
- * JSON-WSO2/<caso>/ y la celda queda con el link a esa carpeta; los que no
- * alcanzan a copiarse quedan como links a archivos (los pasa después el
- * botón "Pasar JSON a JSON-WSO2"). No repite links que ya estaban (los
+ * JSON-WSO2/<caso>_<ambiente>/ y la celda queda con el link a esa carpeta;
+ * los que no alcanzan a copiarse quedan como links a archivos (los pasa
+ * después el botón "Pasar JSON a JSON-WSO2"). Si la celda tenía la carpeta
+ * de antes (solo por caso), se conserva y los links nuevos van debajo, para
+ * que "Pasar" copie todo junto. No repite links que ya estaban (los
  * reintentos pueden volver a reportar los mismos). En Sheets creados antes
  * de esta columna, si la fila 1 tiene cabeceras y la N está vacía, escribe
  * el título.
@@ -1060,8 +1062,13 @@ function agregarJsonAFilas_(sheet, filas, jsonUrls) {
     celdaHeader.setValue(SHEET_HEADERS[SHEET_COLS.ARCHIVOS_JSON - 1]).setFontWeight('bold');
   }
 
-  // Copia a JSON-WSO2, una vez por caso (las filas de un envío suelen ser
-  // del mismo caso).
+  // Copia a JSON-WSO2, una vez por caso y ambiente (las filas de un envío
+  // suelen ser del mismo caso y ambiente).
+  var clave = function(row) {
+    var caso = String(sheet.getRange(row, SHEET_COLS.NUMERO_CASO).getValue() || '').trim();
+    var ambiente = String(sheet.getRange(row, SHEET_COLS.AMBIENTE).getValue() || '').trim();
+    return { caso: caso, ambiente: ambiente, k: caso + '|' + jsonWso2CodigoAmbiente_(ambiente) };
+  };
   var copiaPorCaso = {};
   var quedaMs = jsonWso2TiempoParaCopiar_();
   if (quedaMs) {
@@ -1070,18 +1077,18 @@ function agregarJsonAFilas_(sheet, filas, jsonUrls) {
       var ids = jsonWso2IdsDeUrls_(jsonUrls);
       var memoWso2 = jsonWso2NuevaMemoria_();
       filas.forEach(function(row) {
-        var caso = String(sheet.getRange(row, SHEET_COLS.NUMERO_CASO).getValue() || '').trim();
-        if (!caso || copiaPorCaso[caso] !== undefined) return;
+        var c = clave(row);
+        if (!c.caso || copiaPorCaso[c.k] !== undefined) return;
         // El camino de cada JSON se toma desde la carpeta del caso que
         // creó el envío (<Servicio>/<Caso>/...).
-        var leidos = quedaMs() > 0 ? jsonWso2LeerArchivos_(ids, caso, [], memoWso2) : { archivos: [], noLeidos: [] };
-        copiaPorCaso[caso] = leidos.archivos.length > 0 && quedaMs() > 0
-          ? jsonWso2CopiarAlCaso_(raizId, caso, leidos.archivos, quedaMs, memoWso2)
+        var leidos = quedaMs() > 0 ? jsonWso2LeerArchivos_(ids, c.caso, [], memoWso2) : { archivos: [], noLeidos: [] };
+        copiaPorCaso[c.k] = leidos.archivos.length > 0 && quedaMs() > 0
+          ? jsonWso2CopiarAlCaso_(raizId, c.caso, c.ambiente, leidos.archivos, quedaMs, memoWso2)
           : null;
-        if (copiaPorCaso[caso]) {
+        if (copiaPorCaso[c.k]) {
           // Sin copiar (por tiempo, error o sin acceso): quedan como links.
-          copiaPorCaso[caso].pendientes = copiaPorCaso[caso].pendientes
-            .concat(copiaPorCaso[caso].fallidos, leidos.noLeidos);
+          copiaPorCaso[c.k].pendientes = copiaPorCaso[c.k].pendientes
+            .concat(copiaPorCaso[c.k].fallidos, leidos.noLeidos);
         }
       });
     } catch (errCopia) {
@@ -1099,9 +1106,12 @@ function agregarJsonAFilas_(sheet, filas, jsonUrls) {
       if (urls.indexOf(u) === -1) urls.push(u);
     });
 
-    var caso = String(sheet.getRange(row, SHEET_COLS.NUMERO_CASO).getValue() || '').trim();
-    var copia = copiaPorCaso[caso];
-    if (copia && copia.carpeta.total > 0) {
+    var copia = copiaPorCaso[clave(row).k];
+    var conVieja = lineas.some(function(l) {
+      var leida = jsonWso2LeerLinea_(l);
+      return !!leida && leida.vieja;
+    });
+    if (copia && copia.carpeta.total > 0 && !conVieja) {
       // Quedan como links los que no se copiaron.
       var sinCopiar = urls.filter(function(u) {
         var id = jsonWso2IdsDeUrls_([u])[0];
@@ -1109,15 +1119,15 @@ function agregarJsonAFilas_(sheet, filas, jsonUrls) {
       });
       celda.setRichTextValue(jsonWso2Celda_(copia.carpeta, sinCopiar));
     } else if (lineas.some(jsonWso2EsLineaCarpeta_)) {
-      // Ya tenía la carpeta de JSON-WSO2 (un reintento anterior): se
-      // conserva y se agregan debajo los links nuevos.
-      var linea = lineas.filter(jsonWso2EsLineaCarpeta_)[0];
-      var m = /^JSON-WSO2\/(\d+) \((\d+) JSON\)$/.exec(linea);
+      // Ya tenía la carpeta de JSON-WSO2 (un reintento anterior, o la de
+      // antes, solo por caso): se conserva y se agregan debajo los links
+      // nuevos.
+      var leida = jsonWso2LeerLinea_(lineas.filter(jsonWso2EsLineaCarpeta_)[0]);
       var rich = celda.getRichTextValue();
       var tramos = rich ? rich.getRuns() : [];
       var url = tramos.length > 0 ? tramos[0].getLinkUrl() : null;
-      celda.setRichTextValue(url && m
-        ? jsonWso2Celda_({ url: url, caso: m[1], total: Number(m[2]) }, urls)
+      celda.setRichTextValue(url && leida
+        ? jsonWso2Celda_({ url: url, nombre: leida.nombre, total: leida.total }, urls)
         : construirCeldaConEnlaces(lineas.join('\n')));
     } else {
       celda.setRichTextValue(construirCeldaConEnlaces(urls.join('\n')));

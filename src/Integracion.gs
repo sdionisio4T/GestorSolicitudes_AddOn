@@ -159,14 +159,15 @@ function correrIntegracion() {
           var linksN = linksDeCelda_(celdaN);
           var primeraLinea = String(celdaN.getValue() || '').split('\n')[0];
           if (jsonWso2EsLineaCarpeta_(primeraLinea)) {
-            // Con tiempo, el envío copia los JSON a JSON-WSO2/<caso>/ y la N
-            // enlaza esa carpeta, con los JSON en sus mismas subcarpetas.
-            var carpetaWso2 = buscarCarpetaCaso_(raiz, [JSON_WSO2.CARPETA], numeroCaso);
-            revisar(carpetaWso2 !== null, g.nombre + ': existe <raíz>/JSON-WSO2/' + numeroCaso);
+            // Con tiempo, el envío copia los JSON a JSON-WSO2/<caso>_<ambiente>/
+            // y la N enlaza esa carpeta, con los JSON en sus mismas subcarpetas.
+            var nombreWso2 = jsonWso2NombreCarpeta_(numeroCaso, 'Pruebas');
+            var carpetaWso2 = buscarCarpetaCaso_(raiz, [JSON_WSO2.CARPETA], nombreWso2);
+            revisar(carpetaWso2 !== null, g.nombre + ': existe <raíz>/JSON-WSO2/' + nombreWso2);
             var enWso2 = carpetaWso2 ? listarJsonRecursivo_(carpetaWso2).length : 0;
             revisar(enWso2 === jsonEnCarpeta.length,
                     g.nombre + ': JSON-WSO2 tiene los mismos .json que la carpeta copiada (' + enWso2 + ' de ' + jsonEnCarpeta.length + ')');
-            revisar(primeraLinea === jsonWso2TextoCarpeta_(numeroCaso, enWso2),
+            revisar(primeraLinea === jsonWso2TextoCarpeta_(nombreWso2, enWso2),
                     g.nombre + ': columna N dice "' + primeraLinea + '"');
             if (carpetaWso2) {
               revisar(linksN[0] && linksN[0].indexOf(carpetaWso2.getId()) !== -1,
@@ -375,8 +376,13 @@ function limpiarIntegracion_(sheet, startRow, envioId, raiz, servicio, apimExist
     }
     var wso2 = raiz.getFoldersByName(JSON_WSO2.CARPETA);
     while (wso2.hasNext()) {
-      var delCaso = wso2.next().getFoldersByName(numeroCaso);
-      while (delCaso.hasNext()) delCaso.next().setTrashed(true);
+      // La del caso de prueba en cada ambiente (y la de antes, solo por caso).
+      var delCaso = wso2.next().getFolders();
+      while (delCaso.hasNext()) {
+        var c = delCaso.next();
+        var nombre = c.getName();
+        if (nombre === numeroCaso || nombre.indexOf(numeroCaso + '_') === 0) c.setTrashed(true);
+      }
     }
   } catch (errCarpetas) {
     console.error('[Integración] No se pudieron mandar a la papelera las carpetas de prueba: ' + errCarpetas.message);
