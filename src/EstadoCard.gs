@@ -93,8 +93,7 @@ function listarSobresPorCaso(numeroCaso) {
 /**
  * Lee la primera fila del Sheet cuyo ID Envío (col M = 13, oculta)
  * coincide con envioId y devuelve { textoL, urlCarpeta } donde urlCarpeta
- * viene del hipervínculo de la col C si es el "Ver carpeta copiada" (o
- * del texto plano si hay una URL). Retorna null si no se encuentra el
+ * viene del hipervínculo de la col C (la URL de la carpeta copiada). Retorna null si no se encuentra el
  * envío o si el Sheet no es accesible.
  */
 function leerEstadoSheetPorEnvioId(envioId, sobre) {

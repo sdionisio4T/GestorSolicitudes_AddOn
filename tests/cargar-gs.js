@@ -49,10 +49,11 @@ function nuevoRichText() {
         if (i === texto.length || linkEn(i) !== linkEn(inicio)) {
           const url = linkEn(inicio);
           const parte = texto.slice(inicio, i);
+          const desde = inicio;
           runs.push({
             getText: () => parte,
             getLinkUrl: () => url,
-            getStartIndex: () => inicio,
+            getStartIndex: () => desde,
             getEndIndex: () => i
           });
           inicio = i;

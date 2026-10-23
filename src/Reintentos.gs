@@ -469,7 +469,7 @@ function procesarSobre(sobre) {
  * Busca las filas del Sheet cuyo ID Envío (columna M = índice 13, oculta)
  * coincide con envioId y les actualiza K (Estado Copia, col 11). Si
  * carpetaSiOk se proveé, además sobrescribe C (Drive, col 3) con el
- * hipervínculo "Ver carpeta copiada" (mismo patrón que fase 1 con éxito
+ * URL de la carpeta copiada (mismo patrón que fase 1 con éxito
  * total). Si vienen jsonUrls, se agregan a la columna Archivos JSON (N).
  */
 function actualizarSheetPorEnvioId(sheet, envioId, textoL, carpetaSiOk, jsonUrls) {
@@ -501,10 +501,7 @@ function actualizarSheetPorEnvioId(sheet, envioId, textoL, carpetaSiOk, jsonUrls
   });
 
   if (carpetaSiOk) {
-    var rich = SpreadsheetApp.newRichTextValue()
-      .setText('Ver carpeta copiada')
-      .setLinkUrl(carpetaSiOk.getUrl())
-      .build();
+    var rich = construirCeldaConEnlaces(carpetaSiOk.getUrl());
     filasMatch.forEach(function(rowIdx) {
       sheet.getRange(rowIdx, SHEET_COLS.DRIVE).setRichTextValue(rich);
     });

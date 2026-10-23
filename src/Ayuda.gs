@@ -124,7 +124,7 @@ function buildAyudaCard() {
         .setHeader('¿Dónde quedan los archivos copiados en Drive?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('Los archivos se copian dentro de la carpeta raíz que configuraste, siguiendo esta estructura:\n\n• <b>Componentes generales</b> (ESB, EI, DSS, etc.): <b>[raíz] / Servicio / Caso</b>\n• <b>Componentes API/APIM</b>: <b>[raíz] / APIM / Servicio / Caso</b>\n\nSi el envío mezcla componentes API/APIM con otros, se hacen <b>dos copias en paralelo</b>, una en cada ruta, y cada fila del Sheet apunta a su carpeta correspondiente.\n\nCuando la copia termina bien, la columna Drive del Sheet cambia a <b>"Ver carpeta copiada"</b>. Si algo falla, queda el enlace original del correo y la columna <b>Estado Copia</b> indica qué pasó.')
+            .setText('Los archivos se copian dentro de la carpeta raíz que configuraste, siguiendo esta estructura:\n\n• <b>Componentes generales</b> (ESB, EI, DSS, etc.): <b>[raíz] / Servicio / Caso</b>\n• <b>Componentes API/APIM</b>: <b>[raíz] / APIM / Servicio / Caso</b>\n\nSi el envío mezcla componentes API/APIM con otros, se hacen <b>dos copias en paralelo</b>, una en cada ruta, y cada fila del Sheet apunta a su carpeta correspondiente.\n\nCuando la copia termina bien, la columna Drive del Sheet cambia al <b>link de la carpeta copiada</b>. Si algo falla, queda el enlace original del correo y la columna <b>Estado Copia</b> indica qué pasó.')
         )
     )
     .addSection(

@@ -13,7 +13,7 @@ Google Workspace Add-on (Gmail + Sheets) que automatiza el registro de solicitud
 - **Copia de archivos en Drive** con estructura de carpetas por servicio, caso y APIM, con reintentos automáticos en segundo plano si algo falla.
 - **Panel de envíos** para consultar el estado de solicitudes en curso (desde Gmail o Sheets).
 - **Editor de solicitudes** para modificar envíos ya guardados sin duplicar filas ni re-copiar archivos. Incluye solo envíos en estado PENDIENTE de los últimos 30 días. Los APROBADOS o NO APROBADOS se consideran cerrados y no aparecen en el listado (pero sí siguen apareciendo como aviso en la card "Caso ya registrado" al detectar un correo, para evitar duplicados). Al pasar el estado a APROBADO se borran las observaciones automáticamente.
-- **JSON de las solicitudes** (desde el panel del Sheet): busca los `.json` de cada fila por número de caso y deja los links en la columna N o, si no hay, el motivo. Ver la sección [JSON de las solicitudes](#json-de-las-solicitudes).
+- **JSON de las solicitudes** (desde el panel del Sheet): busca los `.json` de cada fila por número de caso, los copia a `[Raíz]/JSON-WSO2/<caso>_<ambiente>/` y deja en la columna N el link a esa carpeta o, si no hay JSON, el motivo. Ver la sección [JSON de las solicitudes](#json-de-las-solicitudes).
 
 ## Estructura del proyecto
 
@@ -140,7 +140,7 @@ En el panel del add-on en el Sheet, la sección **"🗂️ JSON de las solicitud
 
 | Dónde | Qué |
 |---|---|
-| Columna N | Las búsquedas escriben los links a los `.json` de la fila (o el motivo si no hay). Después, "Pasar JSON a JSON-WSO2" los cambia por el link a la carpeta del caso y ambiente, con el texto `JSON-WSO2/9300_PROD (2 JSON)` (ver [Carpeta JSON-WSO2](#carpeta-json-wso2)). |
+| Columna N | El link de Drive a la carpeta del caso y ambiente en `JSON-WSO2` (por ejemplo `https://drive.google.com/drive/folders/...`), o el motivo si no hay JSON. "Buscar JSON" deja primero los links a los `.json` y "Pasar JSON a JSON-WSO2" los cambia por la carpeta; "Buscar en filas", el envío y los reintentos escriben la carpeta directo (ver [Carpeta JSON-WSO2](#carpeta-json-wso2)). |
 | Columna O ("Carpeta copiada") | El link a la carpeta copiada de la fila, cuando la columna C no enlaza ya una carpeta de la raíz. |
 | Carpeta `[Raíz]/JSON-WSO2/<caso>_<ambiente>/` | Una copia de cada JSON del caso por ambiente, con sus subcarpetas. La llenan "Pasar JSON a JSON-WSO2", "Buscar en filas", el envío y los reintentos. |
 | Pestaña "JSON sin fila" | Los `.json` de la raíz que ninguna fila usa, con su ruta y el porqué. Se reescribe al terminar cada búsqueda completa. |
@@ -154,7 +154,7 @@ Motivos posibles en la columna N:
 | `Original sin JSON` | El original se pudo abrir y no tiene `.json`. |
 | `Sin carpeta ni link` | No hay carpeta del caso en la raíz ni link en la fila. |
 
-Cualquier línea de la columna N que no sea una URL se toma como motivo. Las celdas que ya tienen links nunca se modifican: pueden venir de los envíos.
+Cualquier línea de la columna N que no sea una URL ni la línea de la carpeta se toma como motivo. "Buscar JSON" no modifica las celdas que ya tienen links ni las que ya enlazan su carpeta: pueden venir de los envíos. Las celdas con links las pasan a `JSON-WSO2` "Pasar JSON a JSON-WSO2" y "Buscar en filas".
 
 ### Cómo busca
 
@@ -189,7 +189,7 @@ Para revisar unas pocas filas (por ejemplo, porque ya subieron el JSON o dieron 
 
 Reglas:
 
-- Busca las filas del rango con la columna N vacía o con motivo. Lo que encuentra lo copia en el mismo clic a `JSON-WSO2/<caso>_<ambiente>/` y en la N escribe esa carpeta, por ejemplo `JSON-WSO2/9300_PROD (2 JSON)`.
+- Busca las filas del rango con la columna N vacía o con motivo. Lo que encuentra lo copia en el mismo clic a `JSON-WSO2/<caso>_<ambiente>/` y en la N escribe el link de Drive a esa carpeta.
 - Las filas del rango que ya tienen links a archivos JSON o la carpeta de antes (solo por caso) se pasan a `JSON-WSO2/<caso>_<ambiente>/`, igual que con "Pasar JSON a JSON-WSO2". Las que ya enlazan su carpeta con ambiente no se tocan.
 - Si un JSON no se puede copiar (sin permiso), su link queda en la N y la fila sigue apareciendo en "Pasar".
 - Para una sola fila, "Hasta fila" queda vacío.
@@ -228,6 +228,8 @@ Dentro de cada carpeta se repiten las subcarpetas que tenía cada JSON:
 ```
 
 **Carpetas de antes (solo por caso).** Antes las carpetas eran solo por caso (`JSON-WSO2/9300/`). Las filas que todavía las enlazan (`JSON-WSO2/9300 (2 JSON)`) aparecen en "Pasar JSON a JSON-WSO2", y "Buscar en filas" también las pasa. Se copia el contenido a la carpeta del ambiente de cada fila, conservando las subcarpetas y de qué original salió cada JSON. Cuando ya ninguna fila enlaza la carpeta de antes, se manda a la papelera de Drive (queda 30 días). Si algo de la carpeta de antes no se puede copiar, la fila sigue enlazándola y no se borra.
+
+**Links escritos como texto.** Antes la columna C decía `Ver carpeta copiada` y la N `JSON-WSO2/9300_PROD (2 JSON)`, con el link detrás del texto. Ahora las dos muestran la URL de la carpeta. Mientras queden filas con el texto de antes, la tarjeta de JSON muestra el aviso "Cambiar a link de Drive", que cambia ese texto por la URL que tenía detrás (no copia nada). Las líneas de carpetas de antes, solo por caso, no las toca: esas las cambia "Pasar JSON a JSON-WSO2".
 
 **Cómo llegan ahí**
 

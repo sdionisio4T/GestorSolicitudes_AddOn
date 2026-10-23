@@ -473,7 +473,9 @@ function indiceResultadoDesdeWso2_(resultado, caso, ambiente, casosWso2) {
 function indiceCarpetaWso2Rota_(celda, casosWso2) {
   if (!casosWso2 || celda.carpetas.length === 0) return false;
   var l = jsonWso2LeerLinea_(celda.carpetas[0]);
-  return !!l && !casosWso2[l.nombre];
+  if (!l) return false;
+  if (!l.id) return !casosWso2[l.nombre];
+  return !Object.keys(casosWso2).some(function(nombre) { return casosWso2[nombre].id === l.id; });
 }
 
 // ── Recorrido de Drive ────────────────────────────────────────────────
@@ -608,22 +610,23 @@ function indiceEsLineaLink_(linea) {
 }
 
 /**
- * Separa el contenido de una celda de la columna N en links (líneas que
- * son una URL), carpetas (la línea "JSON-WSO2/<caso>_<ambiente> (<n>
- * JSON)") y motivos (cualquier otra línea con texto). viejas: las líneas de
- * carpetas de antes, solo por caso ("JSON-WSO2/9300 (2 JSON)"); también
- * están en carpetas.
+ * Separa el contenido de una celda de la columna N en carpetas (la URL de
+ * una carpeta de Drive, o el texto de antes "JSON-WSO2/<caso>_<ambiente>
+ * (<n> JSON)"), links (las otras líneas que son una URL) y motivos
+ * (cualquier otra línea con texto). viejas: las líneas de carpetas de
+ * antes, solo por caso ("JSON-WSO2/9300 (2 JSON)"); también están en
+ * carpetas.
  */
 function indiceAnalizarCeldaN_(texto) {
   var res = { links: [], carpetas: [], motivos: [], viejas: [] };
   String(texto == null ? '' : texto).split('\n').forEach(function(linea) {
     var l = linea.trim();
     if (!l) return;
-    if (indiceEsLineaLink_(l)) {
-      res.links.push(l);
-    } else if (jsonWso2EsLineaCarpeta_(l)) {
+    if (jsonWso2EsLineaCarpeta_(l)) {
       res.carpetas.push(l);
       if (jsonWso2LeerLinea_(l).vieja) res.viejas.push(l);
+    } else if (indiceEsLineaLink_(l)) {
+      res.links.push(l);
     } else {
       res.motivos.push(l);
     }
@@ -1607,6 +1610,177 @@ function indiceFilasPorPasar_() {
   }
 }
 
+// ── Links de carpeta como URL ─────────────────────────────────────────
+//
+// Antes la columna C decía "Ver carpeta copiada" y la N
+// "JSON-WSO2/9300_PROD (2 JSON)", con el link detrás del texto. Ahora las
+// dos muestran la URL de la carpeta. "Cambiar a link de Drive" convierte
+// las filas escritas antes. Las carpetas de antes, solo por caso
+// ("JSON-WSO2/9300 (2 JSON)"), no se tocan: esas las cambia "Pasar".
+
+var INDICE_TEXTO_VER_CARPETA = 'Ver carpeta copiada';
+
+/**
+ * ¿La línea tiene el texto de antes en vez de la URL de la carpeta? (solo
+ * calcula) esN: si es de la columna N.
+ */
+function indiceLineaPorConvertir_(linea, esN) {
+  var l = String(linea == null ? '' : linea).trim();
+  if (!esN) return l === INDICE_TEXTO_VER_CARPETA;
+  var leida = jsonWso2LeerLinea_(l);
+  return !!leida && !leida.id && !leida.vieja;
+}
+
+function indiceTextoPorConvertir_(texto, esN) {
+  return String(texto == null ? '' : texto).split('\n').some(function(l) {
+    return indiceLineaPorConvertir_(l, esN);
+  });
+}
+
+/**
+ * Cuántas filas tienen el texto de antes en la C o en la N (solo calcula).
+ *   valoresC, valoresN: [[texto]] de las dos columnas, mismas filas.
+ */
+function indiceContarLinksPorConvertir_(valoresC, valoresN) {
+  var n = 0;
+  for (var i = 0; i < valoresC.length; i++) {
+    if (indiceTextoPorConvertir_(valoresC[i][0], false) ||
+        indiceTextoPorConvertir_((valoresN[i] || [])[0], true)) n++;
+  }
+  return n;
+}
+
+/**
+ * Celda con cada línea del texto de antes cambiada por la URL que tenía
+ * detrás (solo calcula). Devuelve null si no hay nada que cambiar o si a
+ * esa línea le falta el link.
+ */
+function indiceConvertirCeldaLink_(rich, esN) {
+  if (!rich) return null;
+  var runs = rich.getRuns();
+  function linkEntre(inicio, fin) {
+    for (var r = 0; r < runs.length; r++) {
+      if (runs[r].getLinkUrl() && runs[r].getStartIndex() < fin && runs[r].getEndIndex() > inicio) {
+        return runs[r].getLinkUrl();
+      }
+    }
+    return null;
+  }
+  var inicio = 0;
+  var cambio = false;
+  var faltaLink = false;
+  var lineas = rich.getText().split('\n').map(function(linea) {
+    var desde = inicio;
+    inicio += linea.length + 1;
+    if (!indiceLineaPorConvertir_(linea, esN)) return linea;
+    var url = linkEntre(desde, desde + linea.length);
+    if (!url) {
+      faltaLink = true;
+      return linea;
+    }
+    cambio = true;
+    return url;
+  });
+  if (!cambio || faltaLink) return null;
+  return construirCeldaConEnlaces(lineas.join('\n'));
+}
+
+/**
+ * Filas con el texto de antes en la C o la N del Sheet configurado, o 0 si
+ * no se pudo leer.
+ */
+function indiceFilasLinkPorConvertir_() {
+  try {
+    var sheetId = obtenerSheetId();
+    if (!sheetId) return 0;
+    var hoja = SpreadsheetApp.openById(sheetId).getSheetByName(obtenerSheetTab());
+    if (!hoja || hoja.getLastRow() < 2) return 0;
+    var n = hoja.getLastRow() - 1;
+    return indiceContarLinksPorConvertir_(
+      hoja.getRange(2, SHEET_COLS.DRIVE, n, 1).getValues(),
+      hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, n, 1).getValues());
+  } catch (err) {
+    console.warn('[Indice] No se pudieron contar los links por cambiar: ' + err.message);
+    return 0;
+  }
+}
+
+/**
+ * Cambia en la C y la N el texto de antes por la URL de la carpeta. Si se
+ * acaba el tiempo del clic, deja el resto para el próximo.
+ * Devuelve { cambiadas, quedan, sinLink }.
+ */
+function indiceConvertirLinksCarpeta_(hoja, limiteMs) {
+  var inicio = Date.now();
+  var res = { cambiadas: 0, quedan: 0, sinLink: 0 };
+  var ultima = hoja.getLastRow();
+  if (ultima < 2) return res;
+  var n = ultima - 1;
+  var richC = hoja.getRange(2, SHEET_COLS.DRIVE, n, 1).getRichTextValues();
+  var richN = hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, n, 1).getRichTextValues();
+  var cambiosC = [];
+  var cambiosN = [];
+  var filas = {};
+  [{ rich: richC, esN: false, cambios: cambiosC }, { rich: richN, esN: true, cambios: cambiosN }]
+    .forEach(function(col) {
+      for (var i = 0; i < n; i++) {
+        var celda = col.rich[i][0];
+        if (!celda || !indiceTextoPorConvertir_(celda.getText(), col.esN)) continue;
+        var nueva = indiceConvertirCeldaLink_(celda, col.esN);
+        if (nueva) {
+          col.cambios.push({ fila: i + 2, valor: nueva });
+          filas[i + 2] = true;
+        } else {
+          res.sinLink++;
+        }
+      }
+    });
+
+  // De a tramos, para cortar a tiempo si son muchas.
+  var TAMANO = 300;
+  var hechas = {};
+  var columnas = [{ col: SHEET_COLS.DRIVE, cambios: cambiosC }, { col: SHEET_COLS.ARCHIVOS_JSON, cambios: cambiosN }];
+  for (var c = 0; c < columnas.length; c++) {
+    var cambios = columnas[c].cambios;
+    for (var k = 0; k < cambios.length; k += TAMANO) {
+      if (Date.now() - inicio > limiteMs) break;
+      var parte = cambios.slice(k, k + TAMANO);
+      indiceEscribirTramos_(hoja, columnas[c].col, parte);
+      parte.forEach(function(x) { hechas[x.fila + ':' + columnas[c].col] = true; });
+    }
+  }
+  SpreadsheetApp.flush();
+  var pendientes = {};
+  columnas.forEach(function(x) {
+    x.cambios.forEach(function(c) {
+      if (!hechas[c.fila + ':' + x.col]) pendientes[c.fila] = true;
+    });
+  });
+  res.quedan = Object.keys(pendientes).length;
+  res.cambiadas = Object.keys(filas).length - res.quedan;
+  return res;
+}
+
+function onConvertirLinksCarpeta(e) {
+  var aviso;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return indiceRespuestaBusqueda_('Hay otra tarea escribiendo en el Sheet. Prueba de nuevo en un momento.');
+  try {
+    var hoja = SpreadsheetApp.openById(obtenerSheetId()).getSheetByName(obtenerSheetTab());
+    if (!hoja) throw new Error('No existe la pestaña de solicitudes configurada.');
+    var r = indiceConvertirLinksCarpeta_(hoja, 20000);
+    aviso = r.cambiadas + (r.cambiadas === 1 ? ' fila cambiada' : ' filas cambiadas') + ' a link de Drive.';
+    if (r.quedan > 0) aviso += ' Quedan ' + r.quedan + ': presiona de nuevo.';
+    if (r.sinLink > 0) aviso += ' ' + r.sinLink + ' sin link detrás del texto, no se tocaron.';
+  } catch (err) {
+    console.error('[Indice] ' + err.message);
+    aviso = 'No se pudo cambiar: ' + err.message;
+  } finally {
+    lock.releaseLock();
+  }
+  return indiceRespuestaBusqueda_(aviso);
+}
+
 /**
  * Copia a JSON-WSO2/<caso>_<ambiente>/ los JSON de una fila y arma la
  * celda nueva de la N. La usan "Pasar JSON a JSON-WSO2" y "Buscar en
@@ -2057,6 +2231,7 @@ var INDICE_AYUDA_BOTONES = {
   onDescartarFilasJson: 'Continuar sigue con las filas que faltaron. Descartar lo olvida; lo ya escrito se queda.',
   onCancelarBusquedaJson: 'Olvida esta búsqueda a medias. Lo ya escrito en las columnas N y O se queda.',
   onPasarJsonWso2: 'Copia a JSON-WSO2 los JSON que ya están en la columna N y deja el link a la carpeta del caso.',
+  onConvertirLinksCarpeta: 'Cambia "Ver carpeta copiada" (C) y "JSON-WSO2/... (n JSON)" (N) por la URL de la carpeta. No copia nada.',
   onVerAvanceBusquedaJson: 'Actualiza la tarjeta y deja lista la parte siguiente',
   onContinuarBusquedaJson: 'Sigue la búsqueda desde donde quedó',
   onDetenerBusquedaJson: 'Para la búsqueda; lo ya escrito se queda'
@@ -2241,6 +2416,22 @@ function buildBusquedaJsonCard_() {
             .setTextButtonStyle(CardService.TextButtonStyle.FILLED).setBackgroundColor('#f9ab00')
             .setOnClickAction(CardService.newAction().setFunctionName('onPasarJsonWso2')))
           .addButton(indiceBotonAyuda_('onPasarJsonWso2')))
+    );
+  }
+
+  // Filas escritas antes con texto en vez de la URL de la carpeta.
+  var porConvertir = libre ? indiceFilasLinkPorConvertir_() : 0;
+  if (porConvertir > 0) {
+    card.addSection(
+      CardService.newCardSection()
+        .addWidget(CardService.newTextParagraph().setText(
+          '⚠️ <b>' + porConvertir + (porConvertir === 1 ? ' fila tiene' : ' filas tienen') + ' el link de carpeta como texto</b>'))
+        .addWidget(CardService.newButtonSet()
+          .addButton(CardService.newTextButton().setText('Cambiar a link de Drive')
+            .setAltText(INDICE_AYUDA_BOTONES.onConvertirLinksCarpeta)
+            .setTextButtonStyle(CardService.TextButtonStyle.FILLED).setBackgroundColor('#f9ab00')
+            .setOnClickAction(CardService.newAction().setFunctionName('onConvertirLinksCarpeta')))
+          .addButton(indiceBotonAyuda_('onConvertirLinksCarpeta')))
     );
   }
 

@@ -5,8 +5,8 @@
  * (9300_PROD, 9300_PREPROD, 9300_PRUEBAS o 9300_SIN_AMBIENTE, según la
  * columna F), cada uno en el mismo camino de subcarpetas que tiene dentro
  * del caso (v1.0/EI/docs); si en ese camino llega uno con otro contenido,
- * queda el más reciente. La columna N enlaza esa carpeta con el texto
- * "JSON-WSO2/<caso>_<ambiente> (<n> JSON)". Copian el botón "Pasar JSON a
+ * queda el más reciente. La columna N enlaza esa carpeta con su URL de
+ * Drive. Copian el botón "Pasar JSON a
  * JSON-WSO2", "Buscar en filas", el envío (si le queda tiempo) y los
  * reintentos; "Buscar JSON" solo escribe los links.
  *
@@ -39,9 +39,11 @@ var JSON_WSO2_AMBIENTES = {
 };
 var JSON_WSO2_SIN_AMBIENTE = 'SIN_AMBIENTE';
 
-// "JSON-WSO2/9300_PROD (2 JSON)". Las celdas de antes no llevan ambiente:
+// La N enlaza la carpeta con su URL de Drive. Las celdas de antes dicen
+// "JSON-WSO2/9300_PROD (2 JSON)" y las de las carpetas solo por caso,
 // "JSON-WSO2/9300 (2 JSON)".
 var JSON_WSO2_REGEX_LINEA = /^JSON-WSO2\/((\d+)(?:_([A-Z_]+))?) \((\d+) JSON\)$/;
+var JSON_WSO2_REGEX_URL_CARPETA = /^https?:\/\/drive\.google\.com\/drive\/(?:u\/\d+\/)?folders\/([A-Za-z0-9_-]{10,})\S*$/;
 var JSON_WSO2_REGEX_NOMBRE = /^\d+(?:_[A-Z_]+)?$/;
 
 // Inicio de la acción del botón en curso (envío o edición); 0 si la
@@ -71,21 +73,26 @@ function jsonWso2TiempoParaCopiar_() {
 // ── Celda de la columna N ─────────────────────────────────────────────
 
 /**
- * ¿Es la línea "JSON-WSO2/<caso> (<n> JSON)" de una celda de la N?
+ * ¿Es la línea de la carpeta en una celda de la N? La URL de una carpeta
+ * de Drive o el texto de antes "JSON-WSO2/<caso> (<n> JSON)".
  */
 function jsonWso2EsLineaCarpeta_(linea) {
-  return JSON_WSO2_REGEX_LINEA.test(String(linea || '').trim());
+  return !!jsonWso2LeerLinea_(linea);
 }
 
 /**
  * Partes de la línea de la carpeta (solo calcula): { nombre, caso,
- * ambiente, total, vieja }, o null si no es esa línea. vieja: carpeta de
+ * ambiente, total, vieja, id, url }, o null si no es esa línea. La URL
+ * solo trae id y url; el texto de antes trae el resto. vieja: carpeta de
  * antes, solo por caso.
  */
 function jsonWso2LeerLinea_(linea) {
-  var m = JSON_WSO2_REGEX_LINEA.exec(String(linea || '').trim());
+  var l = String(linea || '').trim();
+  var u = JSON_WSO2_REGEX_URL_CARPETA.exec(l);
+  if (u) return { nombre: '', caso: '', ambiente: '', total: null, vieja: false, id: u[1], url: l };
+  var m = JSON_WSO2_REGEX_LINEA.exec(l);
   if (!m) return null;
-  return { nombre: m[1], caso: m[2], ambiente: m[3] || '', total: Number(m[4]), vieja: !m[3] };
+  return { nombre: m[1], caso: m[2], ambiente: m[3] || '', total: Number(m[4]), vieja: !m[3], id: '', url: '' };
 }
 
 /**
@@ -112,13 +119,18 @@ function jsonWso2TextoCarpeta_(nombre, total) {
 }
 
 /**
- * Celda de la N: primero la línea de la carpeta (con su link) y debajo,
- * una por línea, las URLs de los JSON que no se pudieron copiar.
+ * Celda de la N: primero la URL de la carpeta y debajo, una por línea, las
+ * URLs de los JSON que no se pudieron copiar. Una carpeta de antes, solo
+ * por caso, sigue con su texto para que "Pasar" la encuentre.
  *   carpeta: { url, nombre, total } o null
  */
 function jsonWso2Celda_(carpeta, urlsPendientes) {
   var lineas = [];
-  if (carpeta) lineas.push(jsonWso2TextoCarpeta_(carpeta.nombre, carpeta.total));
+  if (carpeta) {
+    lineas.push(/^\d+$/.test(carpeta.nombre || '')
+      ? jsonWso2TextoCarpeta_(carpeta.nombre, carpeta.total)
+      : carpeta.url);
+  }
   (urlsPendientes || []).forEach(function(u) { lineas.push(u); });
   var builder = SpreadsheetApp.newRichTextValue().setText(lineas.join('\n'));
   var inicio = 0;

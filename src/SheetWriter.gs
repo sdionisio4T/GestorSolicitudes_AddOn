@@ -362,6 +362,12 @@ function escribirFilasAlSheet_(input) {
 
     // Wrap de texto en todas las filas nuevas, una sola llamada.
     sheet.getRange(startRow, 1, numRows, SHEET_NUM_COLS).setWrap(true);
+    // Salvo C y N, que llevan URLs largas: en una línea, recortadas, como
+    // las deja la tarjeta de JSON.
+    sheet.getRangeList([
+      columnALetra(SHEET_COLS.DRIVE) + startRow + ':' + columnALetra(SHEET_COLS.DRIVE) + endRow,
+      columnALetra(SHEET_COLS.ARCHIVOS_JSON) + startRow + ':' + columnALetra(SHEET_COLS.ARCHIVOS_JSON) + endRow
+    ]).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     filasCreadas = numRows;
 
   } finally {
@@ -575,10 +581,7 @@ function consolidarYActualizarSheet_(input, escritura, resultadosPorGrupo, urlsA
       for (var jFila = 0; jFila < filasCreadas; jFila++) {
         var resFila = resultadoParaFila(resultadosPorGrupo, jFila);
         if (resFila && resFila.actualizarColC && resFila.carpetaDestino) {
-          filasC.push([SpreadsheetApp.newRichTextValue()
-            .setText('Ver carpeta copiada')
-            .setLinkUrl(resFila.carpetaDestino.getUrl())
-            .build()]);
+          filasC.push([construirCeldaConEnlaces(resFila.carpetaDestino.getUrl())]);
         } else {
           // Mantiene el valor actual (URLs originales) para esta fila —
           // se escribe el rich text que ya tenía. Para no complicar,
@@ -1123,9 +1126,12 @@ function agregarJsonAFilas_(sheet, filas, jsonUrls) {
       // antes, solo por caso): se conserva y se agregan debajo los links
       // nuevos.
       var leida = jsonWso2LeerLinea_(lineas.filter(jsonWso2EsLineaCarpeta_)[0]);
-      var rich = celda.getRichTextValue();
-      var tramos = rich ? rich.getRuns() : [];
-      var url = tramos.length > 0 ? tramos[0].getLinkUrl() : null;
+      var url = leida && leida.url;
+      if (!url) {
+        var rich = celda.getRichTextValue();
+        var tramos = rich ? rich.getRuns() : [];
+        url = tramos.length > 0 ? tramos[0].getLinkUrl() : null;
+      }
       celda.setRichTextValue(url && leida
         ? jsonWso2Celda_({ url: url, nombre: leida.nombre, total: leida.total }, urls)
         : construirCeldaConEnlaces(lineas.join('\n')));
@@ -1378,10 +1384,7 @@ function copiarUrlsPostEnvio_(sheet, envioId, filasRow, componentes, servicioDes
       // Col C: link a la carpeta si copio OK, sino las URLs originales
       // como link (para que el usuario pueda reintentar manualmente).
       if (resFila && resFila.actualizarColC && resFila.carpetaDestino) {
-        richTextColC.push([SpreadsheetApp.newRichTextValue()
-          .setText('Ver carpeta copiada')
-          .setLinkUrl(resFila.carpetaDestino.getUrl())
-          .build()]);
+        richTextColC.push([construirCeldaConEnlaces(resFila.carpetaDestino.getUrl())]);
       } else {
         richTextColC.push([construirCeldaConEnlaces(urlsACopiar.join('\n'))]);
       }

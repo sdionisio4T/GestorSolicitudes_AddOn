@@ -167,7 +167,7 @@ function correrIntegracion() {
             var enWso2 = carpetaWso2 ? listarJsonRecursivo_(carpetaWso2).length : 0;
             revisar(enWso2 === jsonEnCarpeta.length,
                     g.nombre + ': JSON-WSO2 tiene los mismos .json que la carpeta copiada (' + enWso2 + ' de ' + jsonEnCarpeta.length + ')');
-            revisar(primeraLinea === jsonWso2TextoCarpeta_(nombreWso2, enWso2),
+            revisar(!!carpetaWso2 && primeraLinea === indiceUrlCarpeta_(carpetaWso2.getId()),
                     g.nombre + ': columna N dice "' + primeraLinea + '"');
             if (carpetaWso2) {
               revisar(linksN[0] && linksN[0].indexOf(carpetaWso2.getId()) !== -1,
