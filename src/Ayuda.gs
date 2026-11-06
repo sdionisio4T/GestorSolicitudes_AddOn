@@ -200,7 +200,7 @@ function buildAyudaCard() {
         .setHeader('¿Hay restricciones en el número de caso?')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('El número de caso debe contener solo dígitos y tener máximo 4 caracteres. Si el dato extraído del correo no cumple, puedes corregirlo manualmente antes de enviar.')
+            .setText('El número de caso debe contener solo dígitos, sin límite de largo. Si el dato extraído del correo no cumple, puedes corregirlo manualmente antes de enviar.')
         )
     )
     .addSection(

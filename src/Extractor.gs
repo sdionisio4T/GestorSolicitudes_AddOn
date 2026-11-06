@@ -61,11 +61,7 @@ function extraerDatos(body, asunto) {
   }
 
   if (matchCaso) {
-    var raw = matchCaso[1];
-    if (raw.length > 4) {
-      console.warn('[Extractor] Caso con más de 4 dígitos (largo=' + raw.length + ') — no se trunca; la validación de onEnviar decidirá qué hacer.');
-    }
-    datos.numeroCaso = raw;
+    datos.numeroCaso = matchCaso[1];
     console.log('[Extractor] Caso encontrado: ' + redactCaso_(datos.numeroCaso) + ' (fuente: ' + fuenteCaso + ')');
   } else {
     console.log('[Extractor] No se encontró número de caso ni en body ni en asunto');

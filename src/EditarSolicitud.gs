@@ -757,9 +757,9 @@ function onGuardarEdicion(e) {
       .setNotification(CardService.newNotification().setText('El número de caso es obligatorio.'))
       .build();
   }
-  if (!/^\d{1,4}$/.test(numeroCaso)) {
+  if (!/^\d+$/.test(numeroCaso)) {
     return CardService.newActionResponseBuilder()
-      .setNotification(CardService.newNotification().setText('El número de caso debe ser solo números (máx. 4 dígitos).'))
+      .setNotification(CardService.newNotification().setText('El número de caso debe ser solo números.'))
       .build();
   }
 

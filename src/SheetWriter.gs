@@ -888,11 +888,11 @@ function marcarDobleClic_(firma) {
  * si algo falla, o null si todo está bien.
  */
 function validarInputPreConfig_(input) {
-  if (input.numeroCaso && !/^\d{1,4}$/.test(input.numeroCaso.trim())) {
+  if (input.numeroCaso && !/^\d+$/.test(input.numeroCaso.trim())) {
     return CardService.newActionResponseBuilder()
       .setNotification(
         CardService.newNotification()
-          .setText('El número de caso debe ser solo números (máx. 4 dígitos). Corrígelo antes de enviar.')
+          .setText('El número de caso debe ser solo números. Corrígelo antes de enviar.')
       )
       .build();
   }
