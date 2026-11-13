@@ -484,23 +484,89 @@ test('busqueda: si el caso ya tiene sus JSON en JSON-WSO2, pone esa carpeta en v
   assert.strictEqual(gs.indiceResultadoDesdeWso2_(conLinks, '9300', 'Producción', casos), conLinks);
 });
 
-test('busqueda: la fila cuya carpeta de JSON-WSO2 ya no existe se vuelve a buscar', () => {
+test('busqueda: las filas con carpeta se revisan; ninguna se da por rota sin preguntarle a Drive', () => {
   const casos = { '9300_PROD': { id: 'x', url: 'u' } };
   const filas = [
     { fila: 2, textoN: 'JSON-WSO2/9300_PROD (2 JSON)', textoO: 'x' },
     { fila: 3, textoN: 'JSON-WSO2/7799_PROD (1 JSON)', textoO: 'x' }
   ];
-  const lista = plano(gs.indiceElegirFilas_(filas, 0, null, casos).map((f) => [f.fila, f.necesitaN, f.reparar]));
-  assert.deepStrictEqual(lista, [[3, true, true]]);
-  // Sin la lista de JSON-WSO2 (no se pudo leer): no se repara nada.
+  // El texto de antes sin id: si no esta en la lista, no se toca.
+  const lista = plano(gs.indiceElegirFilas_(filas, 0, null, casos)
+    .map((f) => [f.fila, f.necesitaN, f.reparar, f.revisarCarpeta, f.carpetaId, f.dudosa]));
+  assert.deepStrictEqual(lista, [[2, false, false, true, 'x', false]]);
+  // Sin la lista de JSON-WSO2 (no se pudo leer): no se revisa nada.
   assert.deepStrictEqual(plano(gs.indiceElegirFilas_(filas, 0, null, null)), []);
-  // Con la URL se busca por el id de la carpeta.
+  // Con la URL: la que no esta en la lista queda dudosa, para confirmarla en Drive.
   const casosId = { '9300_PROD': { id: ID('existe'), url: urlCarpeta(ID('existe')) } };
   const conUrl = [
     { fila: 2, textoN: urlCarpeta(ID('existe')), textoO: 'x' },
-    { fila: 3, textoN: urlCarpeta(ID('borrada')), textoO: 'x' }
+    { fila: 3, textoN: urlCarpeta(ID('otra')), textoO: 'x' }
   ];
-  assert.deepStrictEqual(plano(gs.indiceElegirFilas_(conUrl, 0, null, casosId).map((f) => [f.fila, f.reparar])), [[3, true]]);
+  assert.deepStrictEqual(plano(gs.indiceElegirFilas_(conUrl, 0, null, casosId).map((f) => [f.fila, f.necesitaN, f.dudosa])),
+    [[2, false, false], [3, false, true]]);
+  // Con una lista vacia (fallo de lectura de antes) nada se repara de entrada.
+  assert.ok(gs.indiceElegirFilas_(conUrl, 0, null, {}).every((f) => !f.necesitaN && !f.reparar));
+});
+
+test('carpeta dudosa: solo se repara si Drive confirma que no existe', () => {
+  const carpeta = { id: ID('n9300'), name: '9300_PROD', mimeType: CARP, padre: ID('otra') };
+  const enPapelera = { id: ID('papel'), name: '9301_PROD', mimeType: CARP, padre: ID('otra'), papelera: true };
+  instalar(driveFalso([carpeta, enPapelera]));
+  const cuenta = {};
+  const revisar = (id) => plano(gs.indiceRevisarCarpetaDeFila_(
+    { fila: 2, caso: '9300', ids: [], carpetaId: id, dudosa: true },
+    () => ({ links: [], jsons: [], motivo: null }), sinLimite, gs.jsonWso2NuevaMemoria_(), cuenta));
+  assert.deepStrictEqual(revisar(ID('n9300')), {});
+  assert.deepStrictEqual(revisar(ID('papel')), { reparar: true });
+  assert.deepStrictEqual(revisar(ID('noexiste')), { reparar: true });
+});
+
+test('carpeta de la fila: se agregan los JSON del caso que le faltan, sin repetir', () => {
+  const caso = { id: ID('caso'), name: 'Servicio 9300', mimeType: CARP, padre: RAIZ };
+  const wso2 = { id: ID('n9300'), name: '9300_PROD', mimeType: CARP, padre: ID('wso2') };
+  const ya = json('ya', 'a.json', caso.id, 'm1', '2026-09-01');
+  const copiaYa = json('copiaYa', 'a.json', wso2.id, 'm1', '2026-09-01');
+  const nuevo = json('nuevo', 'b.json', caso.id, 'm2', '2026-09-02');
+  const d = driveFalso([caso, wso2, ya, copiaYa, nuevo]);
+  instalar(d);
+  const cuenta = {};
+  const resultado = { links: [], motivo: null, jsons: [
+    { id: ya.id, nombre: 'a.json', md5: 'm1', modificado: '2026-09-01' },
+    { id: nuevo.id, nombre: 'b.json', md5: 'm2', modificado: '2026-09-02' }
+  ] };
+  const r = gs.indiceRevisarCarpetaDeFila_({ fila: 2, caso: '9300', ids: [], carpetaId: wso2.id, dudosa: false },
+    () => resultado, sinLimite, gs.jsonWso2NuevaMemoria_(), cuenta);
+  assert.deepStrictEqual(plano(r), {});
+  const enCarpeta = d.items.filter((i) => i.padre === wso2.id).map((i) => i.name).sort();
+  assert.deepStrictEqual(enCarpeta, ['a.json', 'b.json']);
+  assert.strictEqual(cuenta.jsonNuevos, 1);
+  assert.strictEqual(cuenta.revisadas, 1);
+
+  // Segunda vez: ya estan los dos, no copia nada.
+  const cuenta2 = {};
+  gs.indiceRevisarCarpetaDeFila_({ fila: 2, caso: '9300', ids: [], carpetaId: wso2.id, dudosa: false },
+    () => resultado, sinLimite, gs.jsonWso2NuevaMemoria_(), cuenta2);
+  assert.strictEqual(cuenta2.jsonNuevos || 0, 0);
+  assert.strictEqual(d.items.filter((i) => i.padre === wso2.id).length, 2);
+});
+
+test('JSON que faltan en la carpeta: por contenido, o por nombre si no hay md5', () => {
+  const contenido = { jsons: { 'a.json': { id: 'c1', md5: 'm1' }, 'v1/b.json': { id: 'c2', md5: '' } }, carpetas: {} };
+  const faltan = gs.jsonWso2JsonQueFaltan_([
+    { id: '1', nombre: 'otro-nombre.json', md5: 'm1' },
+    { id: '2', nombre: 'b.json', md5: '' },
+    { id: '3', nombre: 'c.json', md5: 'm3' },
+    { id: '3', nombre: 'c.json', md5: 'm3' }
+  ], contenido);
+  assert.deepStrictEqual(plano(faltan.map((j) => j.id)), ['3']);
+});
+
+test('lista de JSON-WSO2: si no se puede leer devuelve null', () => {
+  instalar({ DriveApp: {}, Drive: { Files: {
+    get: () => { throw new Error('Backend error'); },
+    list: () => { throw new Error('Backend error'); }
+  } } });
+  assert.strictEqual(gs.jsonWso2CarpetasDeCasos_(RAIZ), null);
 });
 
 test('links de carpeta escritos como texto: se cuentan y se cambian por su URL', () => {

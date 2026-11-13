@@ -302,12 +302,30 @@ function jsonWso2CopiarAlCaso_(raizId, caso, ambiente, archivos, quedaMs, memo) 
   if (!numero || !raizId) return null;
   var nombre = jsonWso2NombreCarpeta_(numero, ambiente);
   memo = memo || jsonWso2NuevaMemoria_();
-  var pendientes = [];
-  var fallidos = [];
   var casoId;
-  var contenido;
   try {
     casoId = jsonWso2IdCaso_(jsonWso2IdPrincipal_(raizId, true, memo), nombre, true, memo);
+  } catch (err) {
+    console.warn('[JSON-WSO2] No se pudo abrir la carpeta del caso: ' + err.message);
+    return null;
+  }
+  return jsonWso2CopiarEnCarpeta_(casoId, nombre, numero, archivos, quedaMs, memo);
+}
+
+/**
+ * Lo mismo que jsonWso2CopiarAlCaso_, sobre una carpeta ya conocida (la que
+ * enlaza la N). Además de { carpeta, pendientes, fallidos } devuelve
+ * copiados (nuevos) y actualizados (contenido reemplazado), o null si no se
+ * pudo leer la carpeta.
+ */
+function jsonWso2CopiarEnCarpeta_(casoId, nombre, numero, archivos, quedaMs, memo) {
+  memo = memo || jsonWso2NuevaMemoria_();
+  var pendientes = [];
+  var fallidos = [];
+  var copiados = 0;
+  var actualizados = 0;
+  var contenido;
+  try {
     if (!memo.contenido[casoId]) memo.contenido[casoId] = jsonWso2JsonBajo_(casoId);
     contenido = memo.contenido[casoId];
   } catch (err) {
@@ -341,6 +359,7 @@ function jsonWso2CopiarAlCaso_(raizId, caso, ambiente, archivos, quedaMs, memo) 
         archivo.setContent(DriveApp.getFileById(a.id).getBlob().getDataAsString());
         archivo.setDescription(descripcion);
         ya.md5 = a.md5;
+        actualizados++;
       } else {
         // Copia y descripción en una sola consulta.
         var copia = Drive.Files.copy(
@@ -349,6 +368,7 @@ function jsonWso2CopiarAlCaso_(raizId, caso, ambiente, archivos, quedaMs, memo) 
           { supportsAllDrives: true, fields: 'id' }
         );
         contenido.jsons[clave] = { id: copia.id, md5: a.md5 };
+        copiados++;
       }
     } catch (err) {
       console.warn('[JSON-WSO2] No se pudo copiar un JSON: ' + err.message);
@@ -359,7 +379,9 @@ function jsonWso2CopiarAlCaso_(raizId, caso, ambiente, archivos, quedaMs, memo) 
   return {
     carpeta: { id: casoId, url: indiceUrlCarpeta_(casoId), nombre: nombre, caso: numero, total: Object.keys(contenido.jsons).length },
     pendientes: pendientes,
-    fallidos: fallidos
+    fallidos: fallidos,
+    copiados: copiados,
+    actualizados: actualizados
   };
 }
 
@@ -429,8 +451,9 @@ function jsonWso2LeerArchivos_(ids, caso, topes, memo) {
 
 /**
  * Carpetas que ya existen en JSON-WSO2 (sin crear nada): una consulta.
- * Devuelve { nombre: { id, url } } ("9300_PROD", y las de antes "9300") o
- * {} si JSON-WSO2 no existe.
+ * Devuelve { nombre: { id, url } } ("9300_PROD", y las de antes "9300"),
+ * {} si JSON-WSO2 no existe, o null si no se pudo leer. Con null ninguna
+ * fila se da por rota.
  */
 function jsonWso2CarpetasDeCasos_(raizId) {
   var res = {};
@@ -443,8 +466,46 @@ function jsonWso2CarpetasDeCasos_(raizId) {
     });
   } catch (err) {
     console.warn('[JSON-WSO2] No se pudo leer la carpeta JSON-WSO2: ' + err.message);
+    return null;
   }
   return res;
+}
+
+/**
+ * ¿La carpeta existe y no está en la papelera? true o false cuando Drive lo
+ * confirma; null si no se pudo saber (otro error), y entonces no se toca.
+ */
+function jsonWso2CarpetaExiste_(id) {
+  try {
+    var f = Drive.Files.get(id, { fields: 'id,trashed', supportsAllDrives: true });
+    return !f.trashed;
+  } catch (err) {
+    if (/not found|404|notFound/i.test(String(err && err.message))) return false;
+    console.warn('[JSON-WSO2] No se pudo confirmar si existe la carpeta: ' + err.message);
+    return null;
+  }
+}
+
+/**
+ * JSON del caso que todavía no están en su carpeta de JSON-WSO2 (solo
+ * calcula). Uno está si ya hay una copia con el mismo contenido (md5); sin
+ * md5, si ya hay uno con el mismo nombre.
+ *   jsons: [{ id, nombre, md5 }]; contenido: jsonWso2JsonBajo_
+ */
+function jsonWso2JsonQueFaltan_(jsons, contenido) {
+  var md5s = {};
+  var nombres = {};
+  Object.keys(contenido.jsons).forEach(function(camino) {
+    var j = contenido.jsons[camino];
+    if (j.md5) md5s[j.md5] = true;
+    nombres[camino.split('/').pop()] = true;
+  });
+  var vistos = {};
+  return (jsons || []).filter(function(j) {
+    if (vistos[j.id]) return false;
+    vistos[j.id] = true;
+    return j.md5 ? !md5s[j.md5] : !nombres[j.nombre];
+  });
 }
 
 // ── Carpetas de antes (solo por caso) ─────────────────────────────────

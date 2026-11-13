@@ -29,10 +29,10 @@ var INDICE_CONFIG = {
   RESUMEN_VIGENTE_MS: 24 * 60 * 60 * 1000,
   // Leer todas las carpetas y archivos de la unidad de la raíz (compartida o
   // Mi unidad) con pocas consultas en vez de una consulta por carpeta. En
-  // false se usa siempre el recorrido carpeta por carpeta. Apagado hasta
-  // confirmar dónde está la raíz real: en Mi unidad lista todo el Drive de
-  // quien busca, no solo la raíz.
-  LEER_RAIZ_DE_UNA_VEZ: false
+  // false se usa siempre el recorrido carpeta por carpeta. En Mi unidad
+  // lista todo el Drive de quien busca, no solo la raíz: comparar el número
+  // de carpetas del mapa con el del recorrido carpeta por carpeta.
+  LEER_RAIZ_DE_UNA_VEZ: true
 };
 
 // ── Utilidades ────────────────────────────────────────────────────────
@@ -467,15 +467,23 @@ function indiceResultadoDesdeWso2_(resultado, caso, ambiente, casosWso2) {
 }
 
 /**
- * ¿La celda N enlaza una carpeta de JSON-WSO2 que ya no existe? (solo
- * calcula) Entonces la fila se vuelve a buscar.
+ * Carpeta de JSON-WSO2 que enlaza la celda N (solo calcula):
+ * { id, enLista } o null si no tiene, o si es el texto de antes y no está
+ * en la lista (sin id no se puede confirmar en Drive). enLista: está entre
+ * las carpetas leídas de JSON-WSO2; si no, hay que preguntarle a Drive si
+ * existe antes de darla por rota. Sin la lista (casosWso2 null) no se
+ * revisa nada.
  */
-function indiceCarpetaWso2Rota_(celda, casosWso2) {
-  if (!casosWso2 || celda.carpetas.length === 0) return false;
+function indiceCarpetaDeCeldaN_(celda, casosWso2) {
+  if (!casosWso2 || celda.carpetas.length === 0) return null;
   var l = jsonWso2LeerLinea_(celda.carpetas[0]);
-  if (!l) return false;
-  if (!l.id) return !casosWso2[l.nombre];
-  return !Object.keys(casosWso2).some(function(nombre) { return casosWso2[nombre].id === l.id; });
+  if (!l) return null;
+  if (!l.id) {
+    var porNombre = casosWso2[l.nombre];
+    return porNombre ? { id: porNombre.id, enLista: true } : null;
+  }
+  var enLista = Object.keys(casosWso2).some(function(nombre) { return casosWso2[nombre].id === l.id; });
+  return { id: l.id, enLista: enLista };
 }
 
 // ── Recorrido de Drive ────────────────────────────────────────────────
@@ -1090,21 +1098,25 @@ function indiceLeerFilasCompletas_(hoja, desde, hasta) {
  *     busca. El texto del motivo no se interpreta. Como una fila puede
  *     quedar otra vez con motivo, el avance es la fila y no la celda.
  *   - N mixta, con links y motivo: se limpia.
- *   - N con la carpeta de un caso que ya no existe en JSON-WSO2 (con
- *     casosWso2): se vuelve a buscar (reparar).
+ *   - N con su carpeta de JSON-WSO2 (con casosWso2), desde la fila: se
+ *     revisa (revisarCarpeta) si el caso tiene JSON que la carpeta todavía
+ *     no tiene. dudosa: la carpeta no está en la lista de JSON-WSO2; solo
+ *     se vuelve a buscar si Drive confirma que no existe.
  *   - O vacía cuya carpeta se encontró (no necesita Drive).
- * Devuelve [{ fila, necesitaN, reparar, soloCarpeta, ... }].
+ * Devuelve [{ fila, necesitaN, revisarCarpeta, carpetaId, dudosa,
+ * soloCarpeta, ... }].
  */
 function indiceElegirFilas_(filas, desdeFila, carpetaDe, casosWso2) {
   var lista = [];
   filas.forEach(function(f) {
     var celda = indiceAnalizarCeldaN_(f.textoN);
+    var enRango = f.fila >= (desdeFila || 0);
     var mixta = celda.links.length > 0 && celda.motivos.length > 0 && celda.carpetas.length === 0;
-    var reparar = indiceCarpetaWso2Rota_(celda, casosWso2) && f.fila >= (desdeFila || 0);
-    var necesitaN = (reparar || !indiceCeldaConJson_(celda)) && f.fila >= (desdeFila || 0);
+    var suya = enRango && !indiceCeldaPorPasar_(celda) ? indiceCarpetaDeCeldaN_(celda, casosWso2) : null;
+    var necesitaN = !indiceCeldaConJson_(celda) && enRango;
     var carpeta = carpetaDe ? carpetaDe(f) : null;
     var necesitaO = !!(carpeta && carpeta.carpetas.length > 0 && !String(f.textoO).trim());
-    if (!necesitaN && !mixta && !necesitaO) return;
+    if (!necesitaN && !mixta && !necesitaO && !suya) return;
     lista.push({
       fila: f.fila,
       caso: f.caso,
@@ -1113,13 +1125,68 @@ function indiceElegirFilas_(filas, desdeFila, carpetaDe, casosWso2) {
       componente: f.componente,
       ids: f.ids,
       necesitaN: necesitaN,
-      reparar: reparar,
+      reparar: false,
+      revisarCarpeta: !!suya,
+      carpetaId: suya ? suya.id : null,
+      dudosa: !!(suya && !suya.enLista),
       limpiar: mixta,
       soloCarpeta: !necesitaN && !mixta,
       carpeta: carpeta
     });
   });
   return lista;
+}
+
+/**
+ * Fila que ya tiene su carpeta de JSON-WSO2 en la N.
+ *   1. Si la carpeta no estaba en la lista de JSON-WSO2 (dudosa), se le
+ *      pregunta a Drive. Solo si confirma que no existe o está en la
+ *      papelera, la fila se vuelve a buscar ({ reparar }).
+ *   2. Si existe, compara los JSON del caso (buscarResultado()) con los que
+ *      ya tiene la carpeta y copia a ella los que faltan. La N no cambia.
+ * buscarResultado(): resultado de indiceResultadoFila_, o null si se acabó
+ * el tiempo. Devuelve {} | { reparar } | { cortado }; suma en cuenta.
+ */
+function indiceRevisarCarpetaDeFila_(item, buscarResultado, quedaCopiaMs, memo, cuenta) {
+  if (item.dudosa) {
+    var existe = jsonWso2CarpetaExiste_(item.carpetaId);
+    if (existe === false) return { reparar: true };
+    if (existe === null) {
+      cuenta.carpetaSinConfirmar = (cuenta.carpetaSinConfirmar || 0) + 1;
+      return {};
+    }
+  }
+  var resultado = buscarResultado();
+  if (!resultado) return { cortado: true };
+  cuenta.revisadas = (cuenta.revisadas || 0) + 1;
+  var jsons = resultado.jsons || [];
+  if (jsons.length === 0) return {};
+
+  var contenido;
+  try {
+    if (!memo.contenido[item.carpetaId]) memo.contenido[item.carpetaId] = jsonWso2JsonBajo_(item.carpetaId);
+    contenido = memo.contenido[item.carpetaId];
+  } catch (err) {
+    console.warn('[Indice] No se pudo leer la carpeta de JSON-WSO2 de la fila ' + item.fila + ': ' + err.message);
+    return {};
+  }
+  var faltan = jsonWso2JsonQueFaltan_(jsons, contenido);
+  if (faltan.length === 0) return {};
+
+  var leidos = jsonWso2LeerArchivos_(faltan.map(function(j) { return j.id; }), item.caso, item.ids, memo);
+  if (leidos.archivos.length === 0) return {};
+  var copia = jsonWso2CopiarEnCarpeta_(item.carpetaId, '', indiceNormalizarCaso_(item.caso),
+    leidos.archivos, quedaCopiaMs, memo);
+  if (!copia) return {};
+  if (copia.pendientes.length > 0) return { cortado: true };
+  cuenta.jsonNuevos = (cuenta.jsonNuevos || 0) + copia.copiados;
+  cuenta.jsonActualizados = (cuenta.jsonActualizados || 0) + copia.actualizados;
+  if (copia.copiados + copia.actualizados > 0) {
+    cuenta.carpetasConNuevos = (cuenta.carpetasConNuevos || 0) + 1;
+    console.log('[Indice] Fila ' + item.fila + ': ' + copia.copiados + ' JSON nuevo(s) y ' +
+      copia.actualizados + ' actualizado(s) en su carpeta de JSON-WSO2');
+  }
+  return {};
 }
 
 /**
@@ -1455,6 +1522,19 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
     var originales = { estados: {}, carpetas: {}, jsons: [], posJson: {}, pendientes: [], cola: [] };
     var cuentaO = { revisados: 0, conAcceso: 0, sinAcceso: 0, carpetas: 0, jsons: 0 };
     var bloque = [];
+    if (casosWso2 === null) cuenta.sinListaWso2 = (cuenta.sinListaWso2 || 0) + 1;
+    // Lo que ya se leyó de JSON-WSO2 (contenido de cada carpeta) se reusa
+    // entre filas de esta parte.
+    var memoWso2 = jsonWso2NuevaMemoria_();
+    var quedaCopiaMs = function() { return quedaMs() - INDICE_BUSQUEDA.MARGEN_FILA_MS; };
+    var resultadoDe = function(it) {
+      var r = indiceResultadoFila_(it, arbol, directorio, originales);
+      if (r.pendiente) {
+        if (!indiceRevisarOriginalesDeFila_(it, arbol, originales, cuentaO, quedaMs)) return null;
+        r = indiceResultadoFila_(it, arbol, directorio, originales);
+      }
+      return r;
+    };
 
     var escribirBloque = function() {
       if (bloque.length === 0) return true;
@@ -1486,14 +1566,25 @@ function indiceCorrerBusqueda_(sheetId, presupuestoMs, modo) {
       }
       var item = lista[k];
       var resultado = null;
+      if (item.revisarCarpeta) {
+        var rev = indiceRevisarCarpetaDeFila_(item, function() { return resultadoDe(item); },
+          quedaCopiaMs, memoWso2, cuenta);
+        if (rev.cortado) {
+          cortado = true;
+          break;
+        }
+        if (rev.reparar) {
+          item.necesitaN = true;
+          item.reparar = true;
+          item.soloCarpeta = false;
+          cuenta.reparadas = (cuenta.reparadas || 0) + 1;
+        }
+      }
       if (item.necesitaN) {
-        resultado = indiceResultadoFila_(item, arbol, directorio, originales);
-        if (resultado.pendiente) {
-          if (!indiceRevisarOriginalesDeFila_(item, arbol, originales, cuentaO, quedaMs)) {
-            cortado = true;
-            break;
-          }
-          resultado = indiceResultadoFila_(item, arbol, directorio, originales);
+        resultado = resultadoDe(item);
+        if (!resultado) {
+          cortado = true;
+          break;
         }
         resultado = indiceResultadoDesdeWso2_(resultado, item.caso, item.ambiente, casosWso2);
       }
@@ -2303,6 +2394,12 @@ function indiceTextoCuenta_(cuenta) {
   function agregar(valor, texto) {
     if (valor) lineas.push(valor + ' ' + texto);
   }
+  agregar(c.revisadas, 'fila(s) con carpeta de JSON-WSO2 revisadas');
+  agregar(c.jsonNuevos, 'JSON nuevo(s) agregado(s) a su carpeta de JSON-WSO2');
+  agregar(c.jsonActualizados, 'JSON actualizado(s) en su carpeta de JSON-WSO2');
+  agregar(c.reparadas, 'fila(s) cuya carpeta de JSON-WSO2 se borró, buscadas de nuevo');
+  agregar(c.carpetaSinConfirmar, 'fila(s) sin tocar porque no se pudo confirmar su carpeta');
+  agregar(c.sinListaWso2 ? 'No se pudo leer' : 0, 'la carpeta JSON-WSO2: no se revisaron las filas con carpeta');
   agregar(c.links, 'fila(s) con JSON');
   agregar((c.motivo || 0) + (c.mismoMotivo || 0), 'fila(s) con el motivo de por qué no hay JSON');
   agregar(c.limpiada, 'celda(s) limpiadas (tenían un motivo viejo y links)');
@@ -2753,23 +2850,41 @@ function indiceBuscarEnFilas_(sheetId, rango) {
   var pasoViejas = false;
   // La carpeta recién copiada sirve a las otras filas del caso y ambiente.
   var anotarCaso = function(pasada) {
-    casosWso2[pasada.carpeta.nombre] = { id: pasada.carpeta.id, url: pasada.carpeta.url };
+    if (casosWso2) casosWso2[pasada.carpeta.nombre] = { id: pasada.carpeta.id, url: pasada.carpeta.url };
   };
   for (var i = 0; i < filas.length; i++) {
     var f = filas[i];
     var celda = indiceAnalizarCeldaN_(f.textoN);
     var encontrado = { resultado: null, carpeta: null };
-    // Con su carpeta de JSON-WSO2 (si existe), no se toca. Si la carpeta
-    // que enlaza ya no existe, se vuelve a buscar. Con links a archivos o
-    // con la carpeta de antes (solo por caso), se pasa.
-    var reparar = indiceCarpetaWso2Rota_(celda, casosWso2);
-    var viejas = reparar ? [] : celda.viejas;
-    var porPasar = celda.links.length > 0 || viejas.length > 0;
-    if (celda.carpetas.length > 0 && !reparar && !porPasar) continue;
     if (quedaMs() < INDICE_BUSQUEDA.MARGEN_FILA_MS) {
       faltaDesde = f.fila;
       break;
     }
+    // Con su carpeta de JSON-WSO2: se le agregan los JSON del caso que le
+    // falten y la N no cambia. Solo si Drive confirma que la carpeta ya no
+    // existe, se vuelve a buscar. Con links a archivos o con la carpeta de
+    // antes (solo por caso), se pasa.
+    var reparar = false;
+    if (celda.carpetas.length > 0 && !indiceCeldaPorPasar_(celda)) {
+      var suya = indiceCarpetaDeCeldaN_(celda, casosWso2);
+      if (!suya) continue;
+      var rev = indiceRevisarCarpetaDeFila_(
+        { fila: f.fila, caso: f.caso, ids: f.ids, carpetaId: suya.id, dudosa: !suya.enLista },
+        function() {
+          var buscado = indiceBuscarFila_(f, raizId, hijosDe, originales, cuentaO, quedaMs);
+          return buscado ? buscado.resultado : null;
+        },
+        quedaCopiaMs, memoWso2, cuenta);
+      if (rev.cortado) {
+        faltaDesde = f.fila;
+        break;
+      }
+      if (!rev.reparar) continue;
+      reparar = true;
+      cuenta.reparadas = (cuenta.reparadas || 0) + 1;
+    }
+    var viejas = reparar ? [] : celda.viejas;
+    var porPasar = celda.links.length > 0 || viejas.length > 0;
     var pasada = null;
     if (porPasar) {
       // Se pasan a JSON-WSO2, como en "Pasar JSON a JSON-WSO2". Si no se
@@ -2844,12 +2959,17 @@ function indiceBuscarEnFilas_(sheetId, rango) {
 function indiceTextoResultadoFilas_(rango, res) {
   var donde = indiceTextoRango_(rango);
   donde = donde.charAt(0).toUpperCase() + donde.substring(1);
-  if (res.trabajadas === 0 && !res.faltaDesde && !res.noCopiadas) {
+  var c = res.cuenta || {};
+  if (res.trabajadas === 0 && !res.faltaDesde && !res.noCopiadas && !c.revisadas && !c.carpetaSinConfirmar) {
     return donde + ': no hay nada que buscar (' +
       (res.solicitudes === 0 ? 'no hay solicitudes' : 'ya tienen sus JSON') + ').';
   }
-  var c = res.cuenta || {};
   var partes = [];
+  if (c.revisadas) partes.push(c.revisadas + ' con carpeta revisada');
+  if (c.jsonNuevos) partes.push(c.jsonNuevos + ' JSON nuevo(s) agregado(s) a su carpeta');
+  if (c.jsonActualizados) partes.push(c.jsonActualizados + ' JSON actualizado(s)');
+  if (c.reparadas) partes.push(c.reparadas + ' con la carpeta borrada, buscadas de nuevo');
+  if (c.carpetaSinConfirmar) partes.push(c.carpetaSinConfirmar + ' sin tocar (no se pudo confirmar su carpeta)');
   if (c.links) partes.push(c.links + ' con JSON');
   if (c.pasadas) partes.push(c.pasadas + ' pasada(s) a JSON-WSO2');
   if (res.noCopiadas) partes.push(res.noCopiadas + ' con JSON sin copiar a JSON-WSO2 (quedan en "Pasar")');
@@ -2895,7 +3015,7 @@ function indiceIniciarDesdePanel_(modo, host) {
         indiceContarPorPasar_(hoja.getRange(2, SHEET_COLS.ARCHIVOS_JSON, hoja.getLastRow() - 1, 1).getValues()) === 0) {
       return 'No hay filas por pasar: todas apuntan a su carpeta de JSON-WSO2.';
     }
-  } else if (indiceElegirFilas_(indiceLeerFilasCompletas_(hoja), 0, null).length === 0) {
+  } else if (indiceElegirFilas_(indiceLeerFilasCompletas_(hoja), 0, null, {}).length === 0) {
     return 'Todas las filas ya tienen sus JSON: no hay nada que buscar.';
   }
 
